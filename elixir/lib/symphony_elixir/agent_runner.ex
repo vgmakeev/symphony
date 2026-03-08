@@ -11,11 +11,14 @@ defmodule SymphonyElixir.AgentRunner do
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     Logger.info("Starting agent run for #{issue_context(issue)}")
 
+    maybe_move_to_in_progress(issue)
+
     case Workspace.create_for_issue(issue) do
       {:ok, workspace} ->
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue),
                :ok <- run_codex_turns(workspace, issue, codex_update_recipient, opts) do
+            maybe_move_to_review(issue, workspace)
             :ok
           else
             {:error, reason} ->
@@ -70,6 +73,12 @@ defmodule SymphonyElixir.AgentRunner do
              on_message: codex_message_handler(codex_update_recipient, issue)
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+
+      # For markdown tracker: if DONE.md exists, move to Review immediately and stop turns
+      if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
+        Logger.info("Markdown tracker: DONE.md detected after turn #{turn_number}, moving to Review")
+        maybe_move_to_review(issue, workspace)
+      end
 
       case continue_with_issue?(issue, issue_state_fetcher) do
         {:continue, refreshed_issue} when turn_number < max_turns ->
@@ -150,5 +159,41 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
+  end
+
+  defp markdown_tracker? do
+    Config.tracker_kind() == "markdown"
+  end
+
+  defp maybe_move_to_in_progress(%Issue{state: state} = issue) when is_binary(state) do
+    normalized = String.downcase(String.trim(state))
+
+    if markdown_tracker?() and normalized in ["todo", "rework"] do
+      Logger.info("Markdown tracker: moving #{issue_context(issue)} from #{state} to In Progress")
+      Tracker.update_issue_state(issue.id, "In Progress")
+    end
+  end
+
+  defp maybe_move_to_in_progress(_issue), do: :ok
+
+  defp maybe_move_to_review(%Issue{} = issue, workspace) do
+    if markdown_tracker?() do
+      has_commits = has_git_commits?(workspace)
+      has_done_marker = File.regular?(Path.join(workspace, "DONE.md"))
+
+      if has_commits or has_done_marker do
+        Logger.info("Markdown tracker: moving #{issue_context(issue)} to Review (commits=#{has_commits} done_marker=#{has_done_marker})")
+        Tracker.update_issue_state(issue.id, "Review")
+      else
+        Logger.info("Markdown tracker: no commits or DONE.md found for #{issue_context(issue)}, keeping current state")
+      end
+    end
+  end
+
+  defp has_git_commits?(workspace) do
+    case System.cmd("git", ["log", "--oneline", "-1"], cd: workspace, stderr_to_stdout: true) do
+      {_output, 0} -> true
+      _ -> false
+    end
   end
 end

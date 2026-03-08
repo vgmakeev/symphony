@@ -61,7 +61,8 @@ defmodule SymphonyElixir.Config do
                                  terminal_states: [
                                    type: {:list, :string},
                                    default: @default_terminal_states
-                                 ]
+                                 ],
+                                 tasks_dir: [type: {:or, [:string, nil]}, default: nil]
                                ]
                              ],
                              polling: [
@@ -390,6 +391,7 @@ defmodule SymphonyElixir.Config do
     case tracker_kind() do
       "linear" -> :ok
       "memory" -> :ok
+      "markdown" -> :ok
       nil -> {:error, :missing_tracker_kind}
       other -> {:error, {:unsupported_tracker_kind, other}}
     end
@@ -465,6 +467,15 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:project_slug, scalar_string_value(Map.get(section, "project_slug")))
     |> put_if_present(:active_states, csv_value(Map.get(section, "active_states")))
     |> put_if_present(:terminal_states, csv_value(Map.get(section, "terminal_states")))
+    |> put_if_present(:tasks_dir, binary_value(Map.get(section, "tasks_dir")))
+  end
+
+  @spec markdown_tasks_dir() :: String.t()
+  def markdown_tasks_dir do
+    case get_in(validated_workflow_options(), [:tracker, :tasks_dir]) do
+      nil -> Path.expand("tasks")
+      dir -> Path.expand(dir)
+    end
   end
 
   defp extract_polling_options(section) do
