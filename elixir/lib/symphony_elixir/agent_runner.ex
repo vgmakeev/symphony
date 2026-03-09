@@ -1,10 +1,13 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single issue in an isolated workspace with Claude Code.
+  Executes a single issue in an isolated workspace using a coding agent.
+
+  Supports two backends selected by `codex.command` in WORKFLOW.md:
+  - Claude Code CLI (`claude`) — stream-json over stdio
+  - Codex app-server (`codex ... app-server`) — JSON-RPC 2.0 over stdio
   """
 
   require Logger
-  alias SymphonyElixir.ClaudeCode
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -59,7 +62,7 @@ defmodule SymphonyElixir.AgentRunner do
   defp do_run_claude_turns(workspace, issue, codex_update_recipient, opts, issue_state_fetcher, session_id, turn_number, max_turns) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
-    case ClaudeCode.run(
+    case coding_agent().run(
            workspace,
            prompt,
            issue,
@@ -206,6 +209,14 @@ defmodule SymphonyElixir.AgentRunner do
     case System.cmd("git", ["log", "--oneline", "-1"], cd: workspace, stderr_to_stdout: true) do
       {_output, 0} -> true
       _ -> false
+    end
+  end
+
+  defp coding_agent do
+    if String.contains?(Config.codex_command(), "app-server") do
+      SymphonyElixir.Codex.AppServer
+    else
+      SymphonyElixir.ClaudeCode
     end
   end
 end
