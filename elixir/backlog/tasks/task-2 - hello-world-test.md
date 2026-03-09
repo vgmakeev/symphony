@@ -1,7 +1,7 @@
 ---
 id: task-2
 title: 'Тестовый таск: создать hello world на Python'
-status: 'In Progress'
+status: 'Done'
 assignee: []
 created_date: '2026-03-09'
 labels:
