@@ -39,8 +39,8 @@ defmodule SymphonyElixir.ClaudeCode do
 
       emit(on_message, :session_started, %{
         session_id: session_id,
-        issue_id: issue[:id] || issue.id,
-        issue_identifier: issue[:identifier] || issue.identifier
+        issue_id: Map.get(issue, :id),
+        issue_identifier: Map.get(issue, :identifier)
       }, metadata)
 
       case receive_loop(port, on_message, metadata, Config.codex_turn_timeout_ms(), "") do
@@ -125,7 +125,11 @@ defmodule SymphonyElixir.ClaudeCode do
             :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(full_command)],
             cd: String.to_charlist(Path.expand(workspace)),
-            env: [{~c"_SYMPHONY_PROMPT", String.to_charlist(prompt)}],
+            env: [
+              {~c"_SYMPHONY_PROMPT", String.to_charlist(prompt)},
+              # Clear CLAUDECODE to allow launching from within a Claude Code session
+              {~c"CLAUDECODE", ~c""}
+            ],
             line: @port_line_bytes
           ]
         )
@@ -317,8 +321,8 @@ defmodule SymphonyElixir.ClaudeCode do
   # ---------------------------------------------------------------------------
 
   defp issue_label(issue) do
-    id = issue[:id] || issue.id
-    identifier = issue[:identifier] || issue.identifier
+    id = Map.get(issue, :id)
+    identifier = Map.get(issue, :identifier)
     "issue_id=#{id} issue_identifier=#{identifier}"
   end
 

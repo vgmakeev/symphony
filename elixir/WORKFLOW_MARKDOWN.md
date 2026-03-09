@@ -20,11 +20,7 @@ agent:
   max_concurrent_agents: 3
   max_turns: 5
 codex:
-  command: codex app-server
-  approval_policy: never
-  thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
+  command: claude
 ---
 
 You are working on a task `{{ issue.identifier }}`

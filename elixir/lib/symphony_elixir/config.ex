@@ -432,12 +432,6 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  defp require_valid_codex_runtime_settings do
-    case codex_runtime_settings() do
-      {:ok, _settings} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
 
   defp validated_workflow_options do
     workflow_config()
