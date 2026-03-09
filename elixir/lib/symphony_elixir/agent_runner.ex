@@ -1,10 +1,10 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single Linear issue in an isolated workspace with Codex.
+  Executes a single issue in an isolated workspace with Claude Code.
   """
 
   require Logger
-  alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.ClaudeCode
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -17,7 +17,7 @@ defmodule SymphonyElixir.AgentRunner do
       {:ok, workspace} ->
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue),
-               :ok <- run_codex_turns(workspace, issue, codex_update_recipient, opts) do
+               :ok <- run_claude_turns(workspace, issue, codex_update_recipient, opts) do
             maybe_move_to_review(issue, workspace)
             :ok
           else
@@ -49,63 +49,70 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_codex_update(_recipient, _issue, _message), do: :ok
 
-  defp run_codex_turns(workspace, issue, codex_update_recipient, opts) do
+  defp run_claude_turns(workspace, issue, codex_update_recipient, opts) do
     max_turns = Keyword.get(opts, :max_turns, Config.agent_max_turns())
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace) do
-      try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
-      after
-        AppServer.stop_session(session)
-      end
-    end
+    do_run_claude_turns(workspace, issue, codex_update_recipient, opts, issue_state_fetcher, _session_id = nil, 1, max_turns)
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
+  defp do_run_claude_turns(workspace, issue, codex_update_recipient, opts, issue_state_fetcher, session_id, turn_number, max_turns) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
-    with {:ok, turn_session} <-
-           AppServer.run_turn(
-             app_session,
-             prompt,
-             issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
-           ) do
-      Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+    case ClaudeCode.run(
+           workspace,
+           prompt,
+           issue,
+           on_message: codex_message_handler(codex_update_recipient, issue),
+           session_id: session_id,
+           max_turns: 50
+         ) do
+      {:ok, result} ->
+        returned_session_id = result[:session_id] || session_id
 
-      # For markdown tracker: if DONE.md exists, move to Review immediately and stop turns
-      if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
-        Logger.info("Markdown tracker: DONE.md detected after turn #{turn_number}, moving to Review")
-        maybe_move_to_review(issue, workspace)
-      end
+        Logger.info(
+          "Completed turn for #{issue_context(issue)} session_id=#{returned_session_id} workspace=#{workspace} turn=#{turn_number}/#{max_turns}"
+        )
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
-        {:continue, refreshed_issue} when turn_number < max_turns ->
-          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+        # For markdown tracker: if DONE.md exists, move to Review immediately and stop turns
+        if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
+          Logger.info("Markdown tracker: DONE.md detected after turn #{turn_number}, moving to Review")
+          maybe_move_to_review(issue, workspace)
+        end
 
-          do_run_codex_turns(
-            app_session,
-            workspace,
-            refreshed_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            turn_number + 1,
-            max_turns
-          )
+        case continue_with_issue?(issue, issue_state_fetcher) do
+          {:continue, refreshed_issue} when turn_number < max_turns ->
+            Logger.info(
+              "Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}"
+            )
 
-        {:continue, refreshed_issue} ->
-          Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
+            do_run_claude_turns(
+              workspace,
+              refreshed_issue,
+              codex_update_recipient,
+              opts,
+              issue_state_fetcher,
+              returned_session_id,
+              turn_number + 1,
+              max_turns
+            )
 
-          :ok
+          {:continue, refreshed_issue} ->
+            Logger.info(
+              "Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator"
+            )
 
-        {:done, _refreshed_issue} ->
-          :ok
+            :ok
 
-        {:error, reason} ->
-          {:error, reason}
-      end
+          {:done, _refreshed_issue} ->
+            :ok
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -115,10 +122,10 @@ defmodule SymphonyElixir.AgentRunner do
     """
     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+    - The previous Claude Code turn completed normally, but the issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
-    - Resume from the current workspace and workpad state instead of restarting from scratch.
-    - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
+    - Resume from the current workspace state instead of restarting from scratch.
+    - The original task instructions and prior turn context are already present in this session, so do not restate them before acting.
     - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
     """
   end
@@ -182,10 +189,15 @@ defmodule SymphonyElixir.AgentRunner do
       has_done_marker = File.regular?(Path.join(workspace, "DONE.md"))
 
       if has_commits or has_done_marker do
-        Logger.info("Markdown tracker: moving #{issue_context(issue)} to Review (commits=#{has_commits} done_marker=#{has_done_marker})")
+        Logger.info(
+          "Markdown tracker: moving #{issue_context(issue)} to Review (commits=#{has_commits} done_marker=#{has_done_marker})"
+        )
+
         Tracker.update_issue_state(issue.id, "Review")
       else
-        Logger.info("Markdown tracker: no commits or DONE.md found for #{issue_context(issue)}, keeping current state")
+        Logger.info(
+          "Markdown tracker: no commits or DONE.md found for #{issue_context(issue)}, keeping current state"
+        )
       end
     end
   end
