@@ -69,18 +69,16 @@ defmodule SymphonyElixir.ClaudeCode do
   def stop(os_pid) when is_binary(os_pid), do: stop(String.to_integer(os_pid))
 
   def stop(os_pid) when is_integer(os_pid) do
-    try do
-      System.cmd("kill", ["-TERM", to_string(os_pid)], stderr_to_stdout: true)
+    System.cmd("kill", ["-TERM", to_string(os_pid)], stderr_to_stdout: true)
 
-      Task.async(fn ->
-        Process.sleep(@graceful_shutdown_timeout_ms)
-        System.cmd("kill", ["-KILL", to_string(os_pid)], stderr_to_stdout: true)
-      end)
+    Task.async(fn ->
+      Process.sleep(@graceful_shutdown_timeout_ms)
+      System.cmd("kill", ["-KILL", to_string(os_pid)], stderr_to_stdout: true)
+    end)
 
-      :ok
-    rescue
-      _ -> :ok
-    end
+    :ok
+  rescue
+    _ -> :ok
   end
 
   def stop(_), do: :ok
