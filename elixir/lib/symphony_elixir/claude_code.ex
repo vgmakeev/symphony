@@ -65,14 +65,19 @@ defmodule SymphonyElixir.ClaudeCode do
   @doc """
   Gracefully stops a Claude Code process by OS pid (SIGTERM, then SIGKILL).
   """
-  @spec stop(String.t() | integer()) :: :ok
-  def stop(os_pid) when is_binary(os_pid), do: stop(String.to_integer(os_pid))
+  @spec stop(term()) :: :ok
+  def stop(os_pid) when is_binary(os_pid) do
+    case Integer.parse(os_pid) do
+      {pid, ""} -> stop(pid)
+      _ -> :ok
+    end
+  end
 
   def stop(os_pid) when is_integer(os_pid) do
     System.cmd("kill", ["-TERM", to_string(os_pid)], stderr_to_stdout: true)
 
     Task.async(fn ->
-      Process.sleep(@graceful_shutdown_timeout_ms)
+      Process.sleep(graceful_shutdown_timeout_ms())
       System.cmd("kill", ["-KILL", to_string(os_pid)], stderr_to_stdout: true)
     end)
 
@@ -82,6 +87,14 @@ defmodule SymphonyElixir.ClaudeCode do
   end
 
   def stop(_), do: :ok
+
+  defp graceful_shutdown_timeout_ms do
+    Application.get_env(
+      :symphony_elixir,
+      :claude_code_graceful_shutdown_timeout_ms,
+      @graceful_shutdown_timeout_ms
+    )
+  end
 
   # ---------------------------------------------------------------------------
   # Port management
@@ -134,7 +147,7 @@ defmodule SymphonyElixir.ClaudeCode do
         )
 
       os_pid =
-        case :erlang.port_info(port, :os_pid) do
+        case port_info(port, :os_pid) do
           {:os_pid, pid} -> pid
           _ -> 0
         end
@@ -150,6 +163,13 @@ defmodule SymphonyElixir.ClaudeCode do
     |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(to_string(value))} end)
   end
 
+  defp port_info(port, item) do
+    case Application.get_env(:symphony_elixir, :claude_code_port_info_fun) do
+      fun when is_function(fun, 2) -> fun.(port, item)
+      _ -> :erlang.port_info(port, item)
+    end
+  end
+
   defp build_args(session_id, max_turns) do
     base = [
       "-p",
@@ -159,7 +179,7 @@ defmodule SymphonyElixir.ClaudeCode do
       "--permission-mode",
       "bypassPermissions",
       "--max-turns",
-      to_string(max_turns)
+      to_string(max_turns_arg(max_turns))
     ]
 
     session_args =
@@ -171,6 +191,9 @@ defmodule SymphonyElixir.ClaudeCode do
 
     base ++ session_args
   end
+
+  defp max_turns_arg(max_turns) when is_integer(max_turns) and max_turns >= 0, do: max_turns
+  defp max_turns_arg(_), do: 0
 
   # ---------------------------------------------------------------------------
   # Stream-JSON receive loop
