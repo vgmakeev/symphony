@@ -54,19 +54,24 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_claude_turns(workspace, issue, codex_update_recipient, opts) do
     max_turns = Keyword.get(opts, :max_turns, Config.agent_max_turns())
-    issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    do_run_claude_turns(workspace, issue, codex_update_recipient, opts, issue_state_fetcher, _session_id = nil, 1, max_turns)
+    context = %{
+      codex_update_recipient: codex_update_recipient,
+      issue_state_fetcher: Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1),
+      opts: opts
+    }
+
+    do_run_claude_turns(workspace, issue, context, _session_id = nil, 1, max_turns)
   end
 
-  defp do_run_claude_turns(workspace, issue, codex_update_recipient, opts, issue_state_fetcher, session_id, turn_number, max_turns) do
-    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+  defp do_run_claude_turns(workspace, issue, context, session_id, turn_number, max_turns) do
+    prompt = build_turn_prompt(issue, context.opts, turn_number, max_turns)
 
     case coding_agent().run(
            workspace,
            prompt,
            issue,
-           on_message: codex_message_handler(codex_update_recipient, issue),
+           on_message: codex_message_handler(context.codex_update_recipient, issue),
            session_id: session_id,
            max_turns: 50
          ) do
@@ -75,38 +80,42 @@ defmodule SymphonyElixir.AgentRunner do
 
         Logger.info("Completed turn for #{issue_context(issue)} session_id=#{returned_session_id} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-        # For markdown tracker: if DONE.md exists, move to Review immediately and stop turns
-        if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
-          Logger.info("Markdown tracker: DONE.md detected after turn #{turn_number}, moving to Review")
-          maybe_move_to_review(issue, workspace)
-        end
+        maybe_move_to_review_after_done_marker(workspace, issue, turn_number)
+        continue_after_turn(workspace, issue, context, returned_session_id, turn_number, max_turns)
 
-        case continue_with_issue?(issue, issue_state_fetcher) do
-          {:continue, refreshed_issue} when turn_number < max_turns ->
-            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
-            do_run_claude_turns(
-              workspace,
-              refreshed_issue,
-              codex_update_recipient,
-              opts,
-              issue_state_fetcher,
-              returned_session_id,
-              turn_number + 1,
-              max_turns
-            )
+  defp maybe_move_to_review_after_done_marker(workspace, issue, turn_number) do
+    if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
+      Logger.info("Markdown tracker: DONE.md detected after turn #{turn_number}, moving to Review")
+      maybe_move_to_review(issue, workspace)
+    end
+  end
 
-          {:continue, refreshed_issue} ->
-            Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
+  defp continue_after_turn(workspace, issue, context, session_id, turn_number, max_turns) do
+    case continue_with_issue?(issue, context.issue_state_fetcher) do
+      {:continue, refreshed_issue} when turn_number < max_turns ->
+        Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-            :ok
+        do_run_claude_turns(
+          workspace,
+          refreshed_issue,
+          context,
+          session_id,
+          turn_number + 1,
+          max_turns
+        )
 
-          {:done, _refreshed_issue} ->
-            :ok
+      {:continue, refreshed_issue} ->
+        Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
-          {:error, reason} ->
-            {:error, reason}
-        end
+        :ok
+
+      {:done, _refreshed_issue} ->
+        :ok
 
       {:error, reason} ->
         {:error, reason}
