@@ -200,6 +200,10 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.error("Codex command missing in WORKFLOW.md")
         state
 
+      {:error, :missing_workspace_source} ->
+        Logger.error("workspace.source missing in WORKFLOW.md for workspace.strategy=git_worktree")
+        state
+
       {:error, {:invalid_codex_approval_policy, value}} ->
         Logger.error("Invalid codex.approval_policy in WORKFLOW.md: #{inspect(value)}")
         state

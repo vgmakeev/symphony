@@ -10,7 +10,7 @@ defmodule SymphonyElixir.Config do
   @default_terminal_states ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
   @default_linear_endpoint "https://api.linear.app/graphql"
   @default_prompt_template """
-  You are working on a Linear issue.
+  You are working on a task.
 
   Identifier: {{ issue.identifier }}
   Title: {{ issue.title }}
@@ -24,10 +24,19 @@ defmodule SymphonyElixir.Config do
   """
   @default_poll_interval_ms 30_000
   @default_workspace_root Path.join(System.tmp_dir!(), "symphony_workspaces")
+  @default_workspace_strategy "directory"
+  @default_workspace_base_ref "HEAD"
+  @default_workspace_branch_prefix "symphony/"
   @default_hook_timeout_ms 60_000
   @default_max_concurrent_agents 10
   @default_agent_max_turns 20
   @default_max_retry_backoff_ms 300_000
+  @default_compose_enabled false
+  @default_compose_project_name_prefix "symphony"
+  @default_compose_up_command "up -d --build"
+  @default_compose_down_command "down --remove-orphans --volumes"
+  @default_playwright_isolated false
+  @default_playwright_browsers_path ".playwright-browsers"
   @default_codex_command "claude"
   @default_codex_turn_timeout_ms 3_600_000
   @default_codex_read_timeout_ms 5_000
@@ -76,7 +85,48 @@ defmodule SymphonyElixir.Config do
                                type: :map,
                                default: %{},
                                keys: [
-                                 root: [type: {:or, [:string, nil]}, default: @default_workspace_root]
+                                 root: [type: {:or, [:string, nil]}, default: @default_workspace_root],
+                                 strategy: [
+                                   type: {:or, [:string, nil]},
+                                   default: @default_workspace_strategy
+                                 ],
+                                 source: [type: {:or, [:string, nil]}, default: nil],
+                                 base_ref: [
+                                   type: {:or, [:string, nil]},
+                                   default: @default_workspace_base_ref
+                                 ],
+                                 branch_prefix: [
+                                   type: {:or, [:string, nil]},
+                                   default: @default_workspace_branch_prefix
+                                 ]
+                               ]
+                             ],
+                             compose: [
+                               type: :map,
+                               default: %{},
+                               keys: [
+                                 enabled: [type: :boolean, default: @default_compose_enabled],
+                                 project_name_prefix: [
+                                   type: :string,
+                                   default: @default_compose_project_name_prefix
+                                 ],
+                                 file: [type: {:or, [:string, nil]}, default: nil],
+                                 up: [type: :string, default: @default_compose_up_command],
+                                 down: [type: :string, default: @default_compose_down_command]
+                               ]
+                             ],
+                             playwright: [
+                               type: :map,
+                               default: %{},
+                               keys: [
+                                 isolated: [
+                                   type: :boolean,
+                                   default: @default_playwright_isolated
+                                 ],
+                                 browsers_path: [
+                                   type: :string,
+                                   default: @default_playwright_browsers_path
+                                 ]
                                ]
                              ],
                              agent: [
@@ -184,6 +234,11 @@ defmodule SymphonyElixir.Config do
     get_in(validated_workflow_options(), [:tracker, :kind])
   end
 
+  @spec file_tracker?() :: boolean()
+  def file_tracker? do
+    tracker_kind() in ["markdown", "file", "yaml", "yml"]
+  end
+
   @spec linear_endpoint() :: String.t()
   def linear_endpoint do
     get_in(validated_workflow_options(), [:tracker, :endpoint])
@@ -230,6 +285,94 @@ defmodule SymphonyElixir.Config do
     validated_workflow_options()
     |> get_in([:workspace, :root])
     |> resolve_path_value(@default_workspace_root)
+  end
+
+  @spec workspace_strategy() :: String.t()
+  def workspace_strategy do
+    validated_workflow_options()
+    |> get_in([:workspace, :strategy])
+    |> normalize_workspace_strategy()
+  end
+
+  @spec workspace_source() :: Path.t() | nil
+  def workspace_source do
+    validated_workflow_options()
+    |> get_in([:workspace, :source])
+    |> resolve_path_value(nil)
+    |> case do
+      nil -> nil
+      "" -> nil
+      source -> Path.expand(source)
+    end
+  end
+
+  @spec workspace_base_ref() :: String.t()
+  def workspace_base_ref do
+    validated_workflow_options()
+    |> get_in([:workspace, :base_ref])
+    |> case do
+      value when is_binary(value) and value != "" -> String.trim(value)
+      _ -> @default_workspace_base_ref
+    end
+  end
+
+  @spec workspace_branch_prefix() :: String.t()
+  def workspace_branch_prefix do
+    validated_workflow_options()
+    |> get_in([:workspace, :branch_prefix])
+    |> case do
+      value when is_binary(value) -> value
+      _ -> @default_workspace_branch_prefix
+    end
+  end
+
+  @spec compose_enabled?() :: boolean()
+  def compose_enabled? do
+    get_in(validated_workflow_options(), [:compose, :enabled])
+  end
+
+  @spec compose_project_name_prefix() :: String.t()
+  def compose_project_name_prefix do
+    get_in(validated_workflow_options(), [:compose, :project_name_prefix])
+  end
+
+  @spec compose_file() :: String.t() | nil
+  def compose_file do
+    get_in(validated_workflow_options(), [:compose, :file])
+  end
+
+  @spec compose_up_command() :: String.t()
+  def compose_up_command do
+    get_in(validated_workflow_options(), [:compose, :up])
+  end
+
+  @spec compose_down_command() :: String.t()
+  def compose_down_command do
+    get_in(validated_workflow_options(), [:compose, :down])
+  end
+
+  @spec playwright_isolated?() :: boolean()
+  def playwright_isolated? do
+    get_in(validated_workflow_options(), [:playwright, :isolated])
+  end
+
+  @spec playwright_browsers_path(Path.t()) :: Path.t()
+  def playwright_browsers_path(workspace) when is_binary(workspace) do
+    validated_workflow_options()
+    |> get_in([:playwright, :browsers_path])
+    |> normalize_path_token()
+    |> case do
+      :missing -> @default_playwright_browsers_path
+      "" -> @default_playwright_browsers_path
+      path -> path
+    end
+    |> then(fn path ->
+      if Path.type(path) == :absolute do
+        path
+      else
+        Path.expand(path, workspace)
+      end
+    end)
   end
 
   @spec workspace_hooks() :: workspace_hooks()
@@ -367,7 +510,8 @@ defmodule SymphonyElixir.Config do
     with {:ok, _workflow} <- current_workflow(),
          :ok <- require_tracker_kind(),
          :ok <- require_linear_token(),
-         :ok <- require_linear_project() do
+         :ok <- require_linear_project(),
+         :ok <- require_workspace_source() do
       require_codex_command()
     end
   end
@@ -391,6 +535,9 @@ defmodule SymphonyElixir.Config do
       "linear" -> :ok
       "memory" -> :ok
       "markdown" -> :ok
+      "file" -> :ok
+      "yaml" -> :ok
+      "yml" -> :ok
       nil -> {:error, :missing_tracker_kind}
       other -> {:error, {:unsupported_tracker_kind, other}}
     end
@@ -424,6 +571,14 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  defp require_workspace_source do
+    if workspace_strategy() == "git_worktree" and not is_binary(workspace_source()) do
+      {:error, :missing_workspace_source}
+    else
+      :ok
+    end
+  end
+
   defp require_codex_command do
     if byte_size(String.trim(codex_command())) > 0 do
       :ok
@@ -431,7 +586,6 @@ defmodule SymphonyElixir.Config do
       {:error, :missing_codex_command}
     end
   end
-
 
   defp validated_workflow_options do
     workflow_config()
@@ -444,6 +598,8 @@ defmodule SymphonyElixir.Config do
       tracker: extract_tracker_options(section_map(config, "tracker")),
       polling: extract_polling_options(section_map(config, "polling")),
       workspace: extract_workspace_options(section_map(config, "workspace")),
+      compose: extract_compose_options(section_map(config, "compose")),
+      playwright: extract_playwright_options(section_map(config, "playwright")),
       agent: extract_agent_options(section_map(config, "agent")),
       codex: extract_codex_options(section_map(config, "codex")),
       hooks: extract_hooks_options(section_map(config, "hooks")),
@@ -479,6 +635,25 @@ defmodule SymphonyElixir.Config do
   defp extract_workspace_options(section) do
     %{}
     |> put_if_present(:root, binary_value(Map.get(section, "root")))
+    |> put_if_present(:strategy, scalar_string_value(Map.get(section, "strategy")))
+    |> put_if_present(:source, binary_value(Map.get(section, "source")))
+    |> put_if_present(:base_ref, scalar_string_value(Map.get(section, "base_ref")))
+    |> put_if_present(:branch_prefix, binary_value(Map.get(section, "branch_prefix"), allow_empty: true))
+  end
+
+  defp extract_compose_options(section) do
+    %{}
+    |> put_if_present(:enabled, boolean_value(Map.get(section, "enabled")))
+    |> put_if_present(:project_name_prefix, scalar_string_value(Map.get(section, "project_name_prefix")))
+    |> put_if_present(:file, binary_value(Map.get(section, "file")))
+    |> put_if_present(:up, command_value(Map.get(section, "up")))
+    |> put_if_present(:down, command_value(Map.get(section, "down")))
+  end
+
+  defp extract_playwright_options(section) do
+    %{}
+    |> put_if_present(:isolated, boolean_value(Map.get(section, "isolated")))
+    |> put_if_present(:browsers_path, binary_value(Map.get(section, "browsers_path")))
   end
 
   defp extract_agent_options(section) do
@@ -795,6 +970,19 @@ defmodule SymphonyElixir.Config do
   end
 
   defp normalize_tracker_kind(_kind), do: nil
+
+  defp normalize_workspace_strategy(strategy) when is_binary(strategy) do
+    case String.downcase(String.trim(strategy)) do
+      "git-worktree" -> "git_worktree"
+      "git_worktree" -> "git_worktree"
+      "worktree" -> "git_worktree"
+      "directory" -> "directory"
+      "dir" -> "directory"
+      _ -> @default_workspace_strategy
+    end
+  end
+
+  defp normalize_workspace_strategy(_strategy), do: @default_workspace_strategy
 
   defp workflow_config do
     case current_workflow() do

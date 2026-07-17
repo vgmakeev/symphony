@@ -18,8 +18,9 @@ defmodule SymphonyElixir.Workspace do
       workspace = workspace_path_for_issue(safe_id)
 
       with :ok <- validate_workspace_path(workspace),
-           {:ok, created?} <- ensure_workspace(workspace),
-           :ok <- maybe_run_after_create_hook(workspace, issue_context, created?) do
+           {:ok, created?} <- ensure_workspace(workspace, safe_id, issue_context),
+           :ok <- maybe_run_after_create_hook(workspace, issue_context, created?),
+           :ok <- maybe_run_compose_up(workspace, issue_context) do
         {:ok, workspace}
       end
     rescue
@@ -29,7 +30,14 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp ensure_workspace(workspace) do
+  defp ensure_workspace(workspace, safe_id, issue_context) do
+    case Config.workspace_strategy() do
+      "git_worktree" -> ensure_git_worktree(workspace, safe_id, issue_context)
+      _ -> ensure_directory_workspace(workspace)
+    end
+  end
+
+  defp ensure_directory_workspace(workspace) do
     cond do
       File.dir?(workspace) ->
         clean_tmp_artifacts(workspace)
@@ -44,10 +52,90 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
+  defp ensure_git_worktree(workspace, safe_id, issue_context) do
+    cond do
+      File.dir?(workspace) and git_workspace?(workspace) ->
+        clean_tmp_artifacts(workspace)
+        {:ok, false}
+
+      File.exists?(workspace) ->
+        File.rm_rf!(workspace)
+        create_git_worktree(workspace, safe_id, issue_context)
+
+      true ->
+        create_git_worktree(workspace, safe_id, issue_context)
+    end
+  end
+
+  defp git_workspace?(workspace) do
+    File.exists?(Path.join(workspace, ".git"))
+  end
+
   defp create_workspace(workspace) do
     File.rm_rf!(workspace)
     File.mkdir_p!(workspace)
     {:ok, true}
+  end
+
+  defp create_git_worktree(workspace, safe_id, issue_context) do
+    with {:ok, source} <- validate_git_worktree_source(Config.workspace_source()),
+         :ok <- create_workspace_parent(workspace),
+         :ok <-
+           run_git_worktree_add(
+             source,
+             workspace,
+             worktree_branch_name(safe_id),
+             Config.workspace_base_ref(),
+             issue_context
+           ) do
+      {:ok, true}
+    end
+  end
+
+  defp create_workspace_parent(workspace) do
+    workspace
+    |> Path.dirname()
+    |> File.mkdir_p!()
+
+    :ok
+  end
+
+  defp validate_git_worktree_source(nil), do: {:error, :missing_workspace_source}
+
+  defp validate_git_worktree_source(source) when is_binary(source) do
+    case System.cmd("git", ["-C", source, "rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      {root, 0} ->
+        {:ok, String.trim(root)}
+
+      {output, status} ->
+        {:error, {:invalid_git_worktree_source, source, status, output}}
+    end
+  end
+
+  defp run_git_worktree_add(source, workspace, branch_name, base_ref, issue_context) do
+    Logger.info("Creating git worktree #{issue_log_context(issue_context)} source=#{source} workspace=#{workspace} branch=#{branch_name} base_ref=#{base_ref}")
+
+    args =
+      if git_branch_exists?(source, branch_name) do
+        ["-C", source, "worktree", "add", workspace, branch_name]
+      else
+        ["-C", source, "worktree", "add", "-b", branch_name, workspace, base_ref]
+      end
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {_output, 0} ->
+        :ok
+
+      {output, status} ->
+        {:error, {:git_worktree_add_failed, status, output}}
+    end
+  end
+
+  defp git_branch_exists?(source, branch_name) do
+    case System.cmd("git", ["-C", source, "show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"]) do
+      {_output, 0} -> true
+      _ -> false
+    end
   end
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
@@ -57,7 +145,8 @@ defmodule SymphonyElixir.Workspace do
         case validate_workspace_path(workspace) do
           :ok ->
             maybe_run_before_remove_hook(workspace)
-            File.rm_rf(workspace)
+            maybe_run_compose_down(workspace)
+            remove_workspace_path(workspace)
 
           {:error, reason} ->
             {:error, reason, ""}
@@ -108,12 +197,73 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
+  @spec runtime_env(Path.t(), map() | String.t() | nil) :: [{String.t(), String.t()}]
+  def runtime_env(workspace, issue_or_identifier) when is_binary(workspace) do
+    issue_context = issue_context(issue_or_identifier)
+    compose_project_name = compose_project_name_for_context(issue_context)
+
+    [
+      {"SYMPHONY_WORKSPACE", Path.expand(workspace)},
+      {"SYMPHONY_ISSUE_ID", to_string(issue_context.issue_id || "")},
+      {"SYMPHONY_ISSUE_IDENTIFIER", to_string(issue_context.issue_identifier || "issue")},
+      {"COMPOSE_PROJECT_NAME", compose_project_name},
+      {"SYMPHONY_COMPOSE_PROJECT_NAME", compose_project_name}
+    ]
+    |> maybe_add_playwright_env(workspace)
+  end
+
+  @spec compose_project_name(map() | String.t() | nil) :: String.t()
+  def compose_project_name(issue_or_identifier) do
+    issue_or_identifier
+    |> issue_context()
+    |> compose_project_name_for_context()
+  end
+
   defp workspace_path_for_issue(safe_id) when is_binary(safe_id) do
     Path.join(Config.workspace_root(), safe_id)
   end
 
+  defp worktree_branch_name(safe_id) do
+    Config.workspace_branch_prefix() <> safe_id
+  end
+
   defp safe_identifier(identifier) do
     String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
+  end
+
+  defp compose_project_name_for_context(issue_context) do
+    prefix = Config.compose_project_name_prefix()
+    issue_part = safe_identifier(issue_context.issue_identifier)
+
+    "#{prefix}_#{issue_part}"
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9_-]/, "_")
+    |> String.trim("_-")
+    |> ensure_compose_project_prefix()
+  end
+
+  defp ensure_compose_project_prefix(""), do: "symphony_issue"
+
+  defp ensure_compose_project_prefix(value) do
+    if String.match?(value, ~r/^[a-z0-9]/) do
+      value
+    else
+      "symphony_" <> value
+    end
+  end
+
+  defp maybe_add_playwright_env(env, workspace) do
+    if Config.playwright_isolated?() do
+      browsers_path = Config.playwright_browsers_path(workspace)
+
+      [
+        {"PLAYWRIGHT_BROWSERS_PATH", browsers_path},
+        {"SYMPHONY_PLAYWRIGHT_BROWSERS_PATH", browsers_path}
+        | env
+      ]
+    else
+      env
+    end
   end
 
   defp clean_tmp_artifacts(workspace) do
@@ -170,7 +320,11 @@ defmodule SymphonyElixir.Workspace do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
+        System.cmd("sh", ["-lc", command],
+          cd: workspace,
+          stderr_to_stdout: true,
+          env: runtime_env(workspace, issue_context)
+        )
       end)
 
     case Task.yield(task, timeout_ms) do
@@ -183,6 +337,101 @@ defmodule SymphonyElixir.Workspace do
         Logger.warning("Workspace hook timed out hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} timeout_ms=#{timeout_ms}")
 
         {:error, {:workspace_hook_timeout, hook_name, timeout_ms}}
+    end
+  end
+
+  defp maybe_run_compose_up(workspace, issue_context) do
+    if Config.compose_enabled?() do
+      run_compose_command(workspace, issue_context, Config.compose_up_command(), "up")
+    else
+      :ok
+    end
+  end
+
+  defp maybe_run_compose_down(workspace) do
+    if Config.compose_enabled?() do
+      issue_context = %{issue_id: nil, issue_identifier: Path.basename(workspace)}
+
+      case run_compose_command(workspace, issue_context, Config.compose_down_command(), "down") do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Ignoring compose down failure workspace=#{workspace} reason=#{inspect(reason)}")
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp run_compose_command(workspace, issue_context, command, phase) do
+    timeout_ms = Config.workspace_hooks()[:timeout_ms]
+    shell_command = compose_shell_command(issue_context, command)
+
+    Logger.info("Running compose #{phase} #{issue_log_context(issue_context)} workspace=#{workspace} project=#{compose_project_name_for_context(issue_context)}")
+
+    task =
+      Task.async(fn ->
+        System.cmd("sh", ["-c", shell_command],
+          cd: workspace,
+          stderr_to_stdout: true,
+          env: runtime_env(workspace, issue_context)
+        )
+      end)
+
+    case Task.yield(task, timeout_ms) do
+      {:ok, {_output, 0}} ->
+        :ok
+
+      {:ok, {output, status}} ->
+        sanitized_output = sanitize_hook_output_for_log(output)
+        Logger.warning("Compose #{phase} failed workspace=#{workspace} status=#{status} output=#{inspect(sanitized_output)}")
+        {:error, {:compose_failed, phase, status, output}}
+
+      nil ->
+        Task.shutdown(task, :brutal_kill)
+        Logger.warning("Compose #{phase} timed out workspace=#{workspace} timeout_ms=#{timeout_ms}")
+        {:error, {:compose_timeout, phase, timeout_ms}}
+    end
+  end
+
+  defp compose_shell_command(issue_context, command) do
+    project_arg = "-p " <> shell_quote(compose_project_name_for_context(issue_context))
+    file_arg = compose_file_arg(Config.compose_file())
+    "docker compose #{project_arg}#{file_arg} #{command}"
+  end
+
+  defp compose_file_arg(nil), do: ""
+  defp compose_file_arg(""), do: ""
+  defp compose_file_arg(file), do: " -f " <> shell_quote(file)
+
+  defp shell_quote(value) do
+    "'" <> String.replace(to_string(value), "'", "'\"'\"'") <> "'"
+  end
+
+  defp remove_workspace_path(workspace) do
+    if Config.workspace_strategy() == "git_worktree" and File.exists?(Path.join(workspace, ".git")) do
+      remove_git_worktree(workspace)
+    else
+      File.rm_rf(workspace)
+    end
+  end
+
+  defp remove_git_worktree(workspace) do
+    case Config.workspace_source() do
+      nil ->
+        File.rm_rf(workspace)
+
+      source ->
+        case System.cmd("git", ["-C", source, "worktree", "remove", "--force", workspace], stderr_to_stdout: true) do
+          {_output, 0} ->
+            {:ok, [workspace]}
+
+          {output, status} ->
+            Logger.warning("git worktree remove failed workspace=#{workspace} status=#{status} output=#{inspect(sanitize_hook_output_for_log(output))}")
+            File.rm_rf(workspace)
+        end
     end
   end
 
@@ -260,6 +509,10 @@ defmodule SymphonyElixir.Workspace do
       issue_id: issue_id,
       issue_identifier: identifier || "issue"
     }
+  end
+
+  defp issue_context(%{issue_id: _issue_id, issue_identifier: _identifier} = issue_context) do
+    issue_context
   end
 
   defp issue_context(identifier) when is_binary(identifier) do

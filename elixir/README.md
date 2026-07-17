@@ -13,12 +13,15 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls Linear for candidate work
-2. Creates an isolated workspace per issue
-3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
+1. Polls a configured tracker for candidate work: Linear, in-memory test data, or local file tasks
+   (`.md`, `.yaml`, `.yml`)
+2. Creates an isolated workspace per task, either as a directory or as a Git worktree from a source
+   repository
+3. Optionally starts a task-scoped Docker Compose project and exposes per-task Playwright env vars
+4. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
    workspace
-4. Sends a workflow prompt to Codex
-5. Keeps Codex working on the issue until the work is done
+5. Sends a workflow prompt to Codex
+6. Keeps Codex working on the issue until the work is done
 
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
@@ -107,6 +110,31 @@ You are working on a Linear issue {{ issue.identifier }}.
 Title: {{ issue.title }} Body: {{ issue.description }}
 ```
 
+Local file tracker with Git worktree, Compose, and Playwright isolation:
+
+```yaml
+tracker:
+  kind: file
+  tasks_dir: ./backlog/tasks
+  active_states: [Todo, In Progress, Rework]
+  terminal_states: [Done, Cancelled]
+workspace:
+  root: ~/code/symphony-workspaces
+  strategy: git_worktree
+  source: ~/code/my-repo
+  base_ref: main
+  branch_prefix: symphony/
+compose:
+  enabled: true
+  project_name_prefix: symphony
+  file: compose.yaml
+  up: up -d --build
+  down: down --remove-orphans --volumes
+playwright:
+  isolated: true
+  browsers_path: .playwright-browsers
+```
+
 Notes:
 
 - If a value is missing, defaults are used.
@@ -124,6 +152,17 @@ Notes:
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
   `git clone ... .` there, along with any other setup commands you need.
+- Use `workspace.strategy: git_worktree` with a local Git repository in `workspace.source` to create
+  one Git worktree and branch per task without recloning the repository.
+- When `compose.enabled` is true, Symphony runs `docker compose` with a deterministic
+  `COMPOSE_PROJECT_NAME` derived from the task identifier. Hooks and agent subprocesses receive the
+  same `COMPOSE_PROJECT_NAME`, `SYMPHONY_COMPOSE_PROJECT_NAME`, `SYMPHONY_WORKSPACE`,
+  `SYMPHONY_ISSUE_ID`, and `SYMPHONY_ISSUE_IDENTIFIER` variables.
+- When `playwright.isolated` is true, hooks and agent subprocesses receive
+  `PLAYWRIGHT_BROWSERS_PATH` and `SYMPHONY_PLAYWRIGHT_BROWSERS_PATH` rooted under the task
+  workspace by default.
+- `tracker.kind: file`, `markdown`, `yaml`, and `yml` all use the local file tracker. Markdown tasks
+  use YAML front matter; YAML tasks use the same fields directly plus optional `description`.
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.

@@ -73,9 +73,7 @@ defmodule SymphonyElixir.AgentRunner do
       {:ok, result} ->
         returned_session_id = result[:session_id] || session_id
 
-        Logger.info(
-          "Completed turn for #{issue_context(issue)} session_id=#{returned_session_id} workspace=#{workspace} turn=#{turn_number}/#{max_turns}"
-        )
+        Logger.info("Completed turn for #{issue_context(issue)} session_id=#{returned_session_id} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
         # For markdown tracker: if DONE.md exists, move to Review immediately and stop turns
         if markdown_tracker?() and File.regular?(Path.join(workspace, "DONE.md")) do
@@ -85,9 +83,7 @@ defmodule SymphonyElixir.AgentRunner do
 
         case continue_with_issue?(issue, issue_state_fetcher) do
           {:continue, refreshed_issue} when turn_number < max_turns ->
-            Logger.info(
-              "Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}"
-            )
+            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
             do_run_claude_turns(
               workspace,
@@ -101,9 +97,7 @@ defmodule SymphonyElixir.AgentRunner do
             )
 
           {:continue, refreshed_issue} ->
-            Logger.info(
-              "Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator"
-            )
+            Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
             :ok
 
@@ -172,7 +166,7 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp markdown_tracker? do
-    Config.tracker_kind() == "markdown"
+    Config.file_tracker?()
   end
 
   defp maybe_move_to_in_progress(%Issue{state: state} = issue) when is_binary(state) do
@@ -192,15 +186,11 @@ defmodule SymphonyElixir.AgentRunner do
       has_done_marker = File.regular?(Path.join(workspace, "DONE.md"))
 
       if has_commits or has_done_marker do
-        Logger.info(
-          "Markdown tracker: moving #{issue_context(issue)} to Review (commits=#{has_commits} done_marker=#{has_done_marker})"
-        )
+        Logger.info("Markdown tracker: moving #{issue_context(issue)} to Review (commits=#{has_commits} done_marker=#{has_done_marker})")
 
         Tracker.update_issue_state(issue.id, "Review")
       else
-        Logger.info(
-          "Markdown tracker: no commits or DONE.md found for #{issue_context(issue)}, keeping current state"
-        )
+        Logger.info("Markdown tracker: no commits or DONE.md found for #{issue_context(issue)}, keeping current state")
       end
     end
   end

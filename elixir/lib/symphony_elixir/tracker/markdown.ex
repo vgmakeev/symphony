@@ -1,13 +1,15 @@
 defmodule SymphonyElixir.Tracker.Markdown do
   @moduledoc """
-  File-based tracker adapter compatible with Backlog.md format.
+  File-based tracker adapter compatible with Backlog.md format and simple YAML tasks.
 
   Reads tasks from a `backlog/tasks/` directory. Each `.md` file uses YAML
   front matter with fields: id, title, status, priority, dependencies, labels.
+  `.yaml` and `.yml` files use the same fields directly, with an optional
+  `description` string.
 
-  Status is stored inside the file's front matter (not via directory structure).
-  State transitions update the `status` field in-place. Completed tasks can
-  optionally be moved to `backlog/completed/` by the user.
+  Status is stored in the task file (not via directory structure). State
+  transitions update the `status` field in-place. Completed tasks can optionally
+  be moved to `backlog/completed/` by the user.
 
   Compatible with: https://github.com/MrLesk/Backlog.md
   """
@@ -95,7 +97,7 @@ defmodule SymphonyElixir.Tracker.Markdown do
     case find_issue_file(issue_id) do
       {:ok, path} ->
         content = File.read!(path)
-        updated = update_front_matter_status(content, backlog_status)
+        updated = update_task_status(path, content, backlog_status)
         File.write!(path, updated)
         :ok
 
@@ -123,31 +125,36 @@ defmodule SymphonyElixir.Tracker.Markdown do
   defp list_md_files(dir) do
     dir
     |> File.ls!()
-    |> Enum.filter(&String.ends_with?(&1, ".md"))
+    |> Enum.filter(&task_file?/1)
     |> Enum.sort()
     |> Enum.map(&Path.join(dir, &1))
   end
 
+  defp task_file?(filename) do
+    ext = filename |> Path.extname() |> String.downcase()
+    ext in [".md", ".yaml", ".yml"]
+  end
+
   defp parse_issue(path) do
     content = File.read!(path)
-    filename = Path.basename(path, ".md")
+    filename = path |> Path.basename() |> Path.rootname()
 
-    {front_matter, body} = extract_front_matter(content)
+    {front_matter, body} = extract_task_payload(path, content)
     {title, description} = extract_title_and_description(body)
 
     raw_status = Map.get(front_matter, "status", "To Do")
     state = status_to_state(raw_status)
-    identifier = Map.get(front_matter, "id", filename)
+    identifier = front_matter |> Map.get("id", filename) |> to_string()
     priority = parse_priority(Map.get(front_matter, "priority"))
     dependencies = Map.get(front_matter, "dependencies", []) || []
     blocked_by = parse_blocked_by(dependencies)
-    labels = Map.get(front_matter, "labels", []) || []
+    labels = normalize_labels(Map.get(front_matter, "labels", []) || [])
 
     %Issue{
       id: identifier,
       identifier: identifier,
       title: Map.get(front_matter, "title") || title || filename,
-      description: description,
+      description: task_description(Map.get(front_matter, "description"), description),
       state: state,
       branch_name: "auto/#{identifier}",
       url: "file://#{path}",
@@ -183,6 +190,24 @@ defmodule SymphonyElixir.Tracker.Markdown do
     end
   end
 
+  defp extract_task_payload(path, content) do
+    case path |> Path.extname() |> String.downcase() do
+      ".yaml" -> extract_yaml_task(content)
+      ".yml" -> extract_yaml_task(content)
+      _ -> extract_front_matter(content)
+    end
+  end
+
+  defp extract_yaml_task(content) do
+    case YamlElixir.read_from_string(content) do
+      {:ok, parsed} when is_map(parsed) ->
+        {parsed, to_string(Map.get(parsed, "description", ""))}
+
+      _ ->
+        {%{}, content}
+    end
+  end
+
   defp parse_blocked_by(deps) when is_list(deps) do
     deps
     |> Enum.reject(&is_nil/1)
@@ -212,7 +237,7 @@ defmodule SymphonyElixir.Tracker.Markdown do
       |> Enum.flat_map(&list_md_files/1)
       |> Enum.map(fn path ->
         content = File.read!(path)
-        {fm, body} = extract_front_matter(content)
+        {fm, body} = extract_task_payload(path, content)
         {path, fm, body}
       end)
 
@@ -236,6 +261,37 @@ defmodule SymphonyElixir.Tracker.Markdown do
         "---\nstatus: '#{new_status}'\n---\n" <> content
     end
   end
+
+  defp update_task_status(path, content, new_status) do
+    case path |> Path.extname() |> String.downcase() do
+      ".yaml" -> update_yaml_status(content, new_status)
+      ".yml" -> update_yaml_status(content, new_status)
+      _ -> update_front_matter_status(content, new_status)
+    end
+  end
+
+  defp update_yaml_status(content, new_status) do
+    if String.match?(content, ~r/^status:\s*.*$/m) do
+      String.replace(content, ~r/^status:\s*.*$/m, "status: '#{new_status}'")
+    else
+      "status: '#{new_status}'\n" <> content
+    end
+  end
+
+  defp normalize_labels(labels) when is_list(labels), do: Enum.map(labels, &to_string/1)
+
+  defp normalize_labels(labels) when is_binary(labels) do
+    labels
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp normalize_labels(_labels), do: []
+
+  defp task_description(nil, fallback), do: fallback
+  defp task_description(description, _fallback) when is_binary(description), do: description
+  defp task_description(description, _fallback), do: to_string(description)
 
   defp extract_title_and_description(content) do
     lines = String.split(content, "\n")
@@ -267,8 +323,8 @@ defmodule SymphonyElixir.Tracker.Markdown do
       |> Enum.flat_map(&list_md_files/1)
       |> Enum.find(fn path ->
         content = File.read!(path)
-        {fm, _body} = extract_front_matter(content)
-        id = Map.get(fm, "id", Path.basename(path, ".md"))
+        {fm, _body} = extract_task_payload(path, content)
+        id = Map.get(fm, "id", path |> Path.basename() |> Path.rootname())
         to_string(id) == to_string(issue_id)
       end)
 

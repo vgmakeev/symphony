@@ -37,6 +37,196 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "file tracker reads yaml tasks and updates yaml status" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-yaml-tracker-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      tasks_dir = Path.join(test_root, "tasks")
+      File.mkdir_p!(tasks_dir)
+
+      task_path = Path.join(tasks_dir, "task-1.yaml")
+
+      File.write!(task_path, """
+      id: TASK-1
+      title: YAML backed task
+      status: To Do
+      priority: high
+      labels:
+        - frontend
+        - e2e
+      description: |
+        Build this from a simple YAML file.
+      """)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "file",
+        tracker_tasks_dir: tasks_dir
+      )
+
+      assert Config.file_tracker?()
+      assert Tracker.adapter() == SymphonyElixir.Tracker.Markdown
+
+      assert {:ok, [issue]} = Tracker.fetch_candidate_issues()
+      assert issue.id == "TASK-1"
+      assert issue.identifier == "TASK-1"
+      assert issue.title == "YAML backed task"
+      assert issue.description =~ "Build this from a simple YAML file."
+      assert issue.state == "Todo"
+      assert issue.priority == 1
+      assert issue.labels == ["frontend", "e2e"]
+
+      assert :ok = Tracker.update_issue_state("TASK-1", "In Progress")
+      assert File.read!(task_path) =~ "status: 'In Progress'"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "workspace can create and remove git worktrees from configured source" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "source repo\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        workspace_strategy: "git_worktree",
+        workspace_source: source_repo,
+        workspace_base_ref: "main",
+        workspace_branch_prefix: "agents/"
+      )
+
+      assert Config.workspace_strategy() == "git_worktree"
+      assert Config.workspace_source() == source_repo
+
+      assert {:ok, workspace} = Workspace.create_for_issue("TASK/1")
+      assert workspace == Path.join(workspace_root, "TASK_1")
+      assert File.read!(Path.join(workspace, "README.md")) == "source repo\n"
+
+      assert {branch, 0} = System.cmd("git", ["-C", workspace, "branch", "--show-current"])
+      assert String.trim(branch) == "agents/TASK_1"
+
+      assert {worktree_list, 0} = System.cmd("git", ["-C", source_repo, "worktree", "list", "--porcelain"])
+      assert worktree_list =~ workspace
+
+      File.write!(Path.join(workspace, "progress.txt"), "branch progress\n")
+      System.cmd("git", ["-C", workspace, "add", "progress.txt"])
+      System.cmd("git", ["-C", workspace, "commit", "-m", "task progress"])
+      assert {branch_head_before_remove, 0} = System.cmd("git", ["-C", workspace, "rev-parse", "HEAD"])
+
+      assert {:ok, _removed} = Workspace.remove(workspace)
+      refute File.exists?(workspace)
+
+      assert {worktree_list_after_remove, 0} =
+               System.cmd("git", ["-C", source_repo, "worktree", "list", "--porcelain"])
+
+      refute worktree_list_after_remove =~ workspace
+
+      assert {:ok, restored_workspace} = Workspace.create_for_issue("TASK/1")
+      assert restored_workspace == workspace
+      assert File.read!(Path.join(restored_workspace, "progress.txt")) == "branch progress\n"
+      assert {branch_head_after_restore, 0} = System.cmd("git", ["-C", restored_workspace, "rev-parse", "HEAD"])
+      assert branch_head_after_restore == branch_head_before_remove
+
+      assert {:ok, _removed} = Workspace.remove(restored_workspace)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "workspace runtime env isolates compose and playwright per issue" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-runtime-env-#{System.unique_integer([:positive])}"
+      )
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      compose_project_name_prefix: "surf",
+      playwright_isolated: true,
+      playwright_browsers_path: ".pw-browsers"
+    )
+
+    workspace = Path.join(workspace_root, "MT_77")
+    env = Workspace.runtime_env(workspace, %{id: "issue-77", identifier: "MT/77"}) |> Map.new()
+
+    assert env["SYMPHONY_WORKSPACE"] == Path.expand(workspace)
+    assert env["SYMPHONY_ISSUE_ID"] == "issue-77"
+    assert env["SYMPHONY_ISSUE_IDENTIFIER"] == "MT/77"
+    assert env["COMPOSE_PROJECT_NAME"] == "surf_mt_77"
+    assert env["SYMPHONY_COMPOSE_PROJECT_NAME"] == "surf_mt_77"
+    assert env["PLAYWRIGHT_BROWSERS_PATH"] == Path.join(workspace, ".pw-browsers")
+    assert env["SYMPHONY_PLAYWRIGHT_BROWSERS_PATH"] == Path.join(workspace, ".pw-browsers")
+  end
+
+  test "workspace compose up uses an issue-scoped project name" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-compose-env-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMPHONY_FAKE_DOCKER_TRACE")
+
+    try do
+      bin_dir = Path.join(test_root, "bin")
+      workspace_root = Path.join(test_root, "workspaces")
+      trace_path = Path.join(test_root, "docker.trace")
+
+      File.mkdir_p!(bin_dir)
+
+      File.write!(Path.join(bin_dir, "docker"), """
+      #!/bin/sh
+      printf 'PWD=%s\\n' "$PWD" >> "$SYMPHONY_FAKE_DOCKER_TRACE"
+      printf 'PROJECT=%s\\n' "$COMPOSE_PROJECT_NAME" >> "$SYMPHONY_FAKE_DOCKER_TRACE"
+      printf 'ARGS=%s\\n' "$*" >> "$SYMPHONY_FAKE_DOCKER_TRACE"
+      """)
+
+      File.chmod!(Path.join(bin_dir, "docker"), 0o755)
+      System.put_env("PATH", bin_dir <> ":" <> (previous_path || ""))
+      System.put_env("SYMPHONY_FAKE_DOCKER_TRACE", trace_path)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        compose_enabled: true,
+        compose_project_name_prefix: "agent",
+        compose_file: "compose.test.yaml",
+        compose_up: "up -d"
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("MT/Compose")
+      trace = File.read!(trace_path)
+
+      assert File.dir?(workspace)
+      assert trace =~ "workspaces/MT_Compose\n"
+      assert trace =~ "PROJECT=agent_mt_compose\n"
+      assert trace =~ "ARGS=compose -p agent_mt_compose -f compose.test.yaml up -d\n"
+    after
+      restore_env("PATH", previous_path)
+      restore_env("SYMPHONY_FAKE_DOCKER_TRACE", previous_trace)
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace path is deterministic per issue identifier" do
     workspace_root =
       Path.join(

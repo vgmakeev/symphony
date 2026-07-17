@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, Workspace}
 
   @initialize_id 1
   @thread_start_id 2
@@ -26,7 +26,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   @spec run(Path.t(), String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(workspace, prompt, issue, opts \\ []) do
-    with {:ok, session} <- start_session(workspace) do
+    with {:ok, session} <- start_session(workspace, issue) do
       try do
         run_turn(session, prompt, issue, opts)
       after
@@ -37,8 +37,12 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   @spec start_session(Path.t()) :: {:ok, session()} | {:error, term()}
   def start_session(workspace) do
+    start_session(workspace, nil)
+  end
+
+  defp start_session(workspace, issue) do
     with :ok <- validate_workspace_cwd(workspace),
-         {:ok, port} <- start_port(workspace) do
+         {:ok, port} <- start_port(workspace, issue) do
       metadata = port_metadata(port)
       expanded_workspace = Path.expand(workspace)
 
@@ -159,7 +163,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace) do
+  defp start_port(workspace, issue) do
     executable = System.find_executable("bash")
 
     if is_nil(executable) do
@@ -174,12 +178,19 @@ defmodule SymphonyElixir.Codex.AppServer do
             :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(Config.codex_command())],
             cd: String.to_charlist(workspace),
+            env: port_env(workspace, issue),
             line: @port_line_bytes
           ]
         )
 
       {:ok, port}
     end
+  end
+
+  defp port_env(workspace, issue) do
+    workspace
+    |> Workspace.runtime_env(issue)
+    |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(to_string(value))} end)
   end
 
   defp port_metadata(port) when is_port(port) do

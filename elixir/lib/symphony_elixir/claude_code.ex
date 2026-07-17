@@ -8,7 +8,7 @@ defmodule SymphonyElixir.ClaudeCode do
   """
 
   require Logger
-  alias SymphonyElixir.Config
+  alias SymphonyElixir.{Config, Workspace}
 
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
@@ -34,14 +34,19 @@ defmodule SymphonyElixir.ClaudeCode do
     max_turns = Keyword.get(opts, :max_turns, 50)
 
     with :ok <- validate_workspace(workspace),
-         {:ok, port, os_pid} <- start_port(workspace, prompt, session_id, max_turns) do
+         {:ok, port, os_pid} <- start_port(workspace, prompt, issue, session_id, max_turns) do
       metadata = %{claude_code_pid: to_string(os_pid)}
 
-      emit(on_message, :session_started, %{
-        session_id: session_id,
-        issue_id: Map.get(issue, :id),
-        issue_identifier: Map.get(issue, :identifier)
-      }, metadata)
+      emit(
+        on_message,
+        :session_started,
+        %{
+          session_id: session_id,
+          issue_id: Map.get(issue, :id),
+          issue_identifier: Map.get(issue, :identifier)
+        },
+        metadata
+      )
 
       case receive_loop(port, on_message, metadata, Config.codex_turn_timeout_ms(), "") do
         {:ok, result} ->
@@ -101,7 +106,7 @@ defmodule SymphonyElixir.ClaudeCode do
     end
   end
 
-  defp start_port(workspace, prompt, session_id, max_turns) do
+  defp start_port(workspace, prompt, issue, session_id, max_turns) do
     claude_cmd = Config.codex_command()
     args = build_args(session_id, max_turns)
 
@@ -125,11 +130,7 @@ defmodule SymphonyElixir.ClaudeCode do
             :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(full_command)],
             cd: String.to_charlist(Path.expand(workspace)),
-            env: [
-              {~c"_SYMPHONY_PROMPT", String.to_charlist(prompt)},
-              # Clear CLAUDECODE to allow launching from within a Claude Code session
-              {~c"CLAUDECODE", ~c""}
-            ],
+            env: port_env(workspace, issue, [{"_SYMPHONY_PROMPT", prompt}, {"CLAUDECODE", ""}]),
             line: @port_line_bytes
           ]
         )
@@ -144,13 +145,23 @@ defmodule SymphonyElixir.ClaudeCode do
     end
   end
 
+  defp port_env(workspace, issue, extra_env) do
+    workspace
+    |> Workspace.runtime_env(issue)
+    |> Kernel.++(extra_env)
+    |> Enum.map(fn {key, value} -> {String.to_charlist(key), String.to_charlist(to_string(value))} end)
+  end
+
   defp build_args(session_id, max_turns) do
     base = [
       "-p",
-      "--output-format", "stream-json",
+      "--output-format",
+      "stream-json",
       "--verbose",
-      "--permission-mode", "bypassPermissions",
-      "--max-turns", to_string(max_turns)
+      "--permission-mode",
+      "bypassPermissions",
+      "--max-turns",
+      to_string(max_turns)
     ]
 
     session_args =

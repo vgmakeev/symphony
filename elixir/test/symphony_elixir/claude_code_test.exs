@@ -194,9 +194,7 @@ defmodule SymphonyElixir.ClaudeCodeTest do
       }
 
       assert {:ok, _result} =
-               ClaudeCode.run(workspace, "continue work", issue,
-                 session_id: "existing-session-42"
-               )
+               ClaudeCode.run(workspace, "continue work", issue, session_id: "existing-session-42")
 
       args_line = File.read!(trace_file)
       assert args_line =~ "--session-id"

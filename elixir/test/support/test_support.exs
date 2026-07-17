@@ -98,10 +98,22 @@ defmodule SymphonyElixir.TestSupport do
           tracker_api_token: "token",
           tracker_project_slug: "project",
           tracker_assignee: nil,
+          tracker_tasks_dir: nil,
           tracker_active_states: ["Todo", "In Progress"],
           tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
+          workspace_strategy: "directory",
+          workspace_source: nil,
+          workspace_base_ref: "HEAD",
+          workspace_branch_prefix: "symphony/",
+          compose_enabled: false,
+          compose_project_name_prefix: "symphony",
+          compose_file: nil,
+          compose_up: "up -d --build",
+          compose_down: "down --remove-orphans --volumes",
+          playwright_isolated: false,
+          playwright_browsers_path: ".playwright-browsers",
           max_concurrent_agents: 10,
           max_turns: 20,
           max_retry_backoff_ms: 300_000,
@@ -133,10 +145,22 @@ defmodule SymphonyElixir.TestSupport do
     tracker_api_token = Keyword.get(config, :tracker_api_token)
     tracker_project_slug = Keyword.get(config, :tracker_project_slug)
     tracker_assignee = Keyword.get(config, :tracker_assignee)
+    tracker_tasks_dir = Keyword.get(config, :tracker_tasks_dir)
     tracker_active_states = Keyword.get(config, :tracker_active_states)
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
+    workspace_strategy = Keyword.get(config, :workspace_strategy)
+    workspace_source = Keyword.get(config, :workspace_source)
+    workspace_base_ref = Keyword.get(config, :workspace_base_ref)
+    workspace_branch_prefix = Keyword.get(config, :workspace_branch_prefix)
+    compose_enabled = Keyword.get(config, :compose_enabled)
+    compose_project_name_prefix = Keyword.get(config, :compose_project_name_prefix)
+    compose_file = Keyword.get(config, :compose_file)
+    compose_up = Keyword.get(config, :compose_up)
+    compose_down = Keyword.get(config, :compose_down)
+    playwright_isolated = Keyword.get(config, :playwright_isolated)
+    playwright_browsers_path = Keyword.get(config, :playwright_browsers_path)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
     max_turns = Keyword.get(config, :max_turns)
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
@@ -169,12 +193,19 @@ defmodule SymphonyElixir.TestSupport do
         "  api_key: #{yaml_value(tracker_api_token)}",
         "  project_slug: #{yaml_value(tracker_project_slug)}",
         "  assignee: #{yaml_value(tracker_assignee)}",
+        "  tasks_dir: #{yaml_value(tracker_tasks_dir)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
         "  terminal_states: #{yaml_value(tracker_terminal_states)}",
         "polling:",
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
+        "  strategy: #{yaml_value(workspace_strategy)}",
+        "  source: #{yaml_value(workspace_source)}",
+        "  base_ref: #{yaml_value(workspace_base_ref)}",
+        "  branch_prefix: #{yaml_value(workspace_branch_prefix)}",
+        compose_yaml(compose_enabled, compose_project_name_prefix, compose_file, compose_up, compose_down),
+        playwright_yaml(playwright_isolated, playwright_browsers_path),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
         "  max_turns: #{yaml_value(max_turns)}",
@@ -233,6 +264,27 @@ defmodule SymphonyElixir.TestSupport do
       hook_entry("before_remove", hook_before_remove)
     ]
     |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  defp compose_yaml(enabled, project_name_prefix, file, up, down) do
+    [
+      "compose:",
+      "  enabled: #{yaml_value(enabled)}",
+      "  project_name_prefix: #{yaml_value(project_name_prefix)}",
+      "  file: #{yaml_value(file)}",
+      "  up: #{yaml_value(up)}",
+      "  down: #{yaml_value(down)}"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp playwright_yaml(isolated, browsers_path) do
+    [
+      "playwright:",
+      "  isolated: #{yaml_value(isolated)}",
+      "  browsers_path: #{yaml_value(browsers_path)}"
+    ]
     |> Enum.join("\n")
   end
 

@@ -13,7 +13,23 @@ polling:
   interval_ms: 10000
 workspace:
   root: ~/dev/symphony-workspaces
+  strategy: directory
+  # For repo work without recloning per task, switch to:
+  # strategy: git_worktree
+  # source: ~/dev/your-repo
+  # base_ref: main
+  # branch_prefix: symphony/
+compose:
+  enabled: false
+  project_name_prefix: symphony
+  # file: compose.yaml
+  up: up -d --build
+  down: down --remove-orphans --volumes
+playwright:
+  isolated: true
+  browsers_path: .playwright-browsers
 hooks:
+  # For workspace.strategy: git_worktree, remove this bootstrap hook or keep only dependency setup.
   after_create: |
     git init .
 agent:
@@ -54,6 +70,17 @@ Instructions:
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
 Work only in the provided workspace directory. Do not touch any other path.
+
+## Runtime isolation
+
+Each task runs in its own workspace. The orchestrator also injects task-scoped environment variables:
+
+- `SYMPHONY_WORKSPACE` is the absolute workspace path.
+- `SYMPHONY_ISSUE_IDENTIFIER` is the local task id.
+- `COMPOSE_PROJECT_NAME` and `SYMPHONY_COMPOSE_PROJECT_NAME` are unique per task. Use them for any `docker compose` commands and do not hardcode compose project names.
+- `PLAYWRIGHT_BROWSERS_PATH` points inside the workspace when Playwright isolation is enabled. Run Playwright from the workspace so reports, traces, test output, and browser installs stay local to this task.
+
+If compose is enabled in the workflow config, the orchestrator starts the task-scoped compose project before the agent turn and tears it down when the workspace is removed.
 
 ## Important: no external tracker
 
