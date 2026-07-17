@@ -177,6 +177,27 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert env["SYMPHONY_PLAYWRIGHT_BROWSERS_PATH"] == Path.join(workspace, ".pw-browsers")
   end
 
+  test "relative task and workspace paths resolve from project root" do
+    project_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-project-root-#{System.unique_integer([:positive])}"
+      )
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_root: project_root,
+      tracker_kind: "file",
+      tracker_tasks_dir: "backlog/tasks",
+      workspace_root: "workspaces",
+      workspace_source: "."
+    )
+
+    assert Config.project_root() == project_root
+    assert Config.markdown_tasks_dir() == Path.join(project_root, "backlog/tasks")
+    assert Config.workspace_root() == Path.join(project_root, "workspaces")
+    assert Config.workspace_source() == project_root
+  end
+
   test "workspace compose up uses an issue-scoped project name" do
     test_root =
       Path.join(

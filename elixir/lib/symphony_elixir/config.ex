@@ -74,6 +74,13 @@ defmodule SymphonyElixir.Config do
                                  tasks_dir: [type: {:or, [:string, nil]}, default: nil]
                                ]
                              ],
+                             project: [
+                               type: :map,
+                               default: %{},
+                               keys: [
+                                 root: [type: {:or, [:string, nil]}, default: nil]
+                               ]
+                             ],
                              polling: [
                                type: :map,
                                default: %{},
@@ -239,6 +246,18 @@ defmodule SymphonyElixir.Config do
     tracker_kind() in ["markdown", "file", "yaml", "yml"]
   end
 
+  @spec project_root() :: Path.t()
+  def project_root do
+    workflow_config()
+    |> section_map("project")
+    |> Map.get("root")
+    |> binary_value()
+    |> case do
+      :omit -> Workflow.project_root()
+      root -> resolve_path_value(root, Workflow.project_root(), Workflow.workflow_dir())
+    end
+  end
+
   @spec linear_endpoint() :: String.t()
   def linear_endpoint do
     get_in(validated_workflow_options(), [:tracker, :endpoint])
@@ -284,7 +303,7 @@ defmodule SymphonyElixir.Config do
   def workspace_root do
     validated_workflow_options()
     |> get_in([:workspace, :root])
-    |> resolve_path_value(@default_workspace_root)
+    |> resolve_path_value(@default_workspace_root, project_root())
   end
 
   @spec workspace_strategy() :: String.t()
@@ -298,7 +317,7 @@ defmodule SymphonyElixir.Config do
   def workspace_source do
     validated_workflow_options()
     |> get_in([:workspace, :source])
-    |> resolve_path_value(nil)
+    |> resolve_path_value(nil, project_root())
     |> case do
       nil -> nil
       "" -> nil
@@ -596,6 +615,7 @@ defmodule SymphonyElixir.Config do
   defp extract_workflow_options(config) do
     %{
       tracker: extract_tracker_options(section_map(config, "tracker")),
+      project: extract_project_options(section_map(config, "project")),
       polling: extract_polling_options(section_map(config, "polling")),
       workspace: extract_workspace_options(section_map(config, "workspace")),
       compose: extract_compose_options(section_map(config, "compose")),
@@ -619,11 +639,16 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:tasks_dir, binary_value(Map.get(section, "tasks_dir")))
   end
 
+  defp extract_project_options(section) do
+    %{}
+    |> put_if_present(:root, binary_value(Map.get(section, "root")))
+  end
+
   @spec markdown_tasks_dir() :: String.t()
   def markdown_tasks_dir do
     case get_in(validated_workflow_options(), [:tracker, :tasks_dir]) do
-      nil -> Path.expand("tasks")
-      dir -> Path.expand(dir)
+      nil -> Path.expand("tasks", project_root())
+      dir -> resolve_path_value(dir, Path.expand("tasks", project_root()), project_root())
     end
   end
 
@@ -1032,10 +1057,11 @@ defmodule SymphonyElixir.Config do
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)
 
-  defp resolve_path_value(:missing, default), do: default
-  defp resolve_path_value(nil, default), do: default
+  defp resolve_path_value(value, default, base)
+  defp resolve_path_value(:missing, default, _base), do: default
+  defp resolve_path_value(nil, default, _base), do: default
 
-  defp resolve_path_value(value, default) when is_binary(value) do
+  defp resolve_path_value(value, default, base) when is_binary(value) do
     case normalize_path_token(value) do
       :missing ->
         default
@@ -1043,7 +1069,7 @@ defmodule SymphonyElixir.Config do
       path ->
         path
         |> String.trim()
-        |> preserve_command_name()
+        |> expand_path_token(base)
         |> then(fn
           "" -> default
           resolved -> resolved
@@ -1051,15 +1077,24 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  defp resolve_path_value(_value, default), do: default
+  defp resolve_path_value(_value, default, _base), do: default
 
-  defp preserve_command_name(path) do
+  defp expand_path_token(path, base) do
     cond do
       uri_path?(path) ->
         path
 
-      String.contains?(path, "/") or String.contains?(path, "\\") ->
+      legacy_env_path?(path) ->
+        path
+
+      Path.type(path) == :absolute ->
         Path.expand(path)
+
+      String.starts_with?(path, "~") ->
+        Path.expand(path)
+
+      is_binary(base) ->
+        Path.expand(path, base)
 
       true ->
         path
@@ -1068,6 +1103,10 @@ defmodule SymphonyElixir.Config do
 
   defp uri_path?(path) do
     String.match?(to_string(path), ~r/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//)
+  end
+
+  defp legacy_env_path?(path) do
+    String.match?(to_string(path), ~r/^env:[A-Za-z_][A-Za-z0-9_]*$/)
   end
 
   defp resolve_env_value(:missing, fallback), do: fallback

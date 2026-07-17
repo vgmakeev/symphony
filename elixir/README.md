@@ -66,6 +66,7 @@ mise install
 mise exec -- mix setup
 mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
+mise exec -- ./bin/symphony /path/to/project
 ```
 
 ## Configuration
@@ -76,12 +77,21 @@ Pass a custom workflow file path to `./bin/symphony` when starting the service:
 ./bin/symphony /path/to/custom/WORKFLOW.md
 ```
 
-If no path is passed, Symphony defaults to `./WORKFLOW.md`.
+You can also pass a project directory. Symphony will use `<project>/WORKFLOW.md` and resolve
+project-relative configuration paths from that directory:
+
+```bash
+./bin/symphony /path/to/project
+```
+
+If no path is passed, Symphony defaults to `./WORKFLOW.md` in the current directory, with the
+current directory as the project root.
 
 Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
 - `--port` also starts the Phoenix observability service (default: disabled)
+- `--project-root` overrides the project root when the workflow file lives outside the project
 
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
@@ -138,6 +148,10 @@ playwright:
 Notes:
 
 - If a value is missing, defaults are used.
+- Relative paths in `tracker.tasks_dir`, `workspace.root`, and `workspace.source` resolve from the
+  project root, not from the Symphony checkout. The project root defaults to the directory passed to
+  `./bin/symphony`, or to the directory containing `WORKFLOW.md` when a workflow file path is passed.
+  A workflow can override it with `project.root`, and the CLI can override it with `--project-root`.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`

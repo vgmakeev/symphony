@@ -17,6 +17,10 @@ defmodule SymphonyElixir.CLITest do
         send(parent, :workflow_set)
         :ok
       end,
+      set_project_root: fn _path ->
+        send(parent, :project_root_set)
+        :ok
+      end,
       set_logs_root: fn _path ->
         send(parent, :logs_root_set)
         :ok
@@ -38,6 +42,7 @@ defmodule SymphonyElixir.CLITest do
     assert banner =~ @ack_flag
     refute_received :file_checked
     refute_received :workflow_set
+    refute_received :project_root_set
     refute_received :logs_root_set
     refute_received :port_set
     refute_received :started
@@ -47,6 +52,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn path -> Path.basename(path) == "WORKFLOW.md" end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_project_root: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
@@ -69,6 +75,10 @@ defmodule SymphonyElixir.CLITest do
         send(parent, {:workflow_set, path})
         :ok
       end,
+      set_project_root: fn path ->
+        send(parent, {:project_root_set, path})
+        :ok
+      end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
@@ -77,6 +87,71 @@ defmodule SymphonyElixir.CLITest do
     assert :ok = CLI.evaluate([@ack_flag, workflow_path], deps)
     assert_received {:workflow_checked, ^expanded_path}
     assert_received {:workflow_set, ^expanded_path}
+    assert_received {:project_root_set, project_root}
+    assert project_root == Path.dirname(expanded_path)
+  end
+
+  test "accepts a project directory and uses its WORKFLOW.md" do
+    parent = self()
+    project_root = Path.expand("tmp/my-project")
+    workflow_path = Path.join(project_root, "WORKFLOW.md")
+
+    deps = %{
+      file_regular?: fn path ->
+        send(parent, {:workflow_checked, path})
+        path == workflow_path
+      end,
+      set_workflow_file_path: fn path ->
+        send(parent, {:workflow_set, path})
+        :ok
+      end,
+      set_project_root: fn path ->
+        send(parent, {:project_root_set, path})
+        :ok
+      end,
+      set_logs_root: fn _path -> :ok end,
+      set_server_port_override: fn _port -> :ok end,
+      ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
+    }
+
+    assert :ok = CLI.evaluate([@ack_flag, "tmp/my-project"], deps)
+    assert_received {:workflow_checked, ^workflow_path}
+    assert_received {:workflow_set, ^workflow_path}
+    assert_received {:project_root_set, ^project_root}
+  end
+
+  test "accepts --project-root with an explicit workflow file" do
+    parent = self()
+    workflow_path = Path.expand("tmp/configs/WORKFLOW.md")
+    project_root = Path.expand("tmp/actual-project")
+
+    deps = %{
+      file_regular?: fn path ->
+        send(parent, {:workflow_checked, path})
+        path == workflow_path
+      end,
+      set_workflow_file_path: fn path ->
+        send(parent, {:workflow_set, path})
+        :ok
+      end,
+      set_project_root: fn path ->
+        send(parent, {:project_root_set, path})
+        :ok
+      end,
+      set_logs_root: fn _path -> :ok end,
+      set_server_port_override: fn _port -> :ok end,
+      ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
+    }
+
+    assert :ok =
+             CLI.evaluate(
+               [@ack_flag, "--project-root", "tmp/actual-project", "tmp/configs/WORKFLOW.md"],
+               deps
+             )
+
+    assert_received {:workflow_checked, ^workflow_path}
+    assert_received {:workflow_set, ^workflow_path}
+    assert_received {:project_root_set, ^project_root}
   end
 
   test "accepts --logs-root and passes an expanded root to runtime deps" do
@@ -85,6 +160,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_project_root: fn _path -> :ok end,
       set_logs_root: fn path ->
         send(parent, {:logs_root, path})
         :ok
@@ -102,6 +178,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> false end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_project_root: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
@@ -115,6 +192,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_project_root: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:error, :boom} end
@@ -129,6 +207,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_project_root: fn _path -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end

@@ -156,6 +156,26 @@ defmodule SymphonyElixir.CoreTest do
     assert Workflow.workflow_file_path() == app_workflow_path
   end
 
+  test "workflow project root defaults to workflow directory and can be overridden" do
+    workflow_path = "/tmp/project-a/config/WORKFLOW.md"
+    project_root = "/tmp/project-a"
+
+    on_exit(fn ->
+      Workflow.clear_project_root()
+      Workflow.clear_workflow_file_path()
+    end)
+
+    Workflow.set_workflow_file_path(workflow_path)
+    Workflow.clear_project_root()
+
+    assert Workflow.workflow_dir() == "/tmp/project-a/config"
+    assert Workflow.project_root() == "/tmp/project-a/config"
+
+    Workflow.set_project_root(project_root)
+
+    assert Workflow.project_root() == project_root
+  end
+
   test "workflow load accepts prompt-only files without front matter" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "PROMPT_ONLY_WORKFLOW.md")
     File.write!(workflow_path, "Prompt only\n")
@@ -448,6 +468,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -456,7 +477,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_in_range(due_at_ms, sent_at_ms, 1_000, 1_100)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -489,6 +510,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -496,7 +518,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_in_range(due_at_ms, sent_at_ms, 40_000, 40_500)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -528,6 +550,7 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
@@ -535,13 +558,14 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert_due_in_range(due_at_ms, sent_at_ms, 10_000, 10_500)
   end
 
-  defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+  defp assert_due_in_range(due_at_ms, sent_at_ms, expected_delay_ms, max_remaining_ms) do
+    now_ms = System.monotonic_time(:millisecond)
+    remaining_ms = due_at_ms - now_ms
 
-    assert remaining_ms >= min_remaining_ms
+    assert due_at_ms >= sent_at_ms + expected_delay_ms
     assert remaining_ms <= max_remaining_ms
   end
 

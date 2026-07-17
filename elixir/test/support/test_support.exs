@@ -41,6 +41,7 @@ defmodule SymphonyElixir.TestSupport do
 
         on_exit(fn ->
           Application.delete_env(:symphony_elixir, :workflow_file_path)
+          Application.delete_env(:symphony_elixir, :project_root)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
           Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
@@ -99,6 +100,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_project_slug: "project",
           tracker_assignee: nil,
           tracker_tasks_dir: nil,
+          project_root: nil,
           tracker_active_states: ["Todo", "In Progress"],
           tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
@@ -146,6 +148,7 @@ defmodule SymphonyElixir.TestSupport do
     tracker_project_slug = Keyword.get(config, :tracker_project_slug)
     tracker_assignee = Keyword.get(config, :tracker_assignee)
     tracker_tasks_dir = Keyword.get(config, :tracker_tasks_dir)
+    project_root = Keyword.get(config, :project_root)
     tracker_active_states = Keyword.get(config, :tracker_active_states)
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
@@ -196,6 +199,7 @@ defmodule SymphonyElixir.TestSupport do
         "  tasks_dir: #{yaml_value(tracker_tasks_dir)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
         "  terminal_states: #{yaml_value(tracker_terminal_states)}",
+        project_yaml(project_root),
         "polling:",
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
@@ -251,6 +255,16 @@ defmodule SymphonyElixir.TestSupport do
   end
 
   defp yaml_value(value), do: yaml_value(to_string(value))
+
+  defp project_yaml(nil), do: nil
+
+  defp project_yaml(root) do
+    [
+      "project:",
+      "  root: #{yaml_value(root)}"
+    ]
+    |> Enum.join("\n")
+  end
 
   defp hooks_yaml(nil, nil, nil, nil, timeout_ms), do: "hooks:\n  timeout_ms: #{yaml_value(timeout_ms)}"
 

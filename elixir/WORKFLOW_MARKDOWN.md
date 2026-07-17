@@ -1,4 +1,7 @@
 ---
+# If this WORKFLOW.md lives outside the target project, uncomment and set:
+# project:
+#   root: ~/dev/your-project
 tracker:
   kind: markdown
   tasks_dir: ./backlog/tasks

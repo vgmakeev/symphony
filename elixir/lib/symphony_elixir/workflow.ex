@@ -13,6 +13,18 @@ defmodule SymphonyElixir.Workflow do
       Path.join(File.cwd!(), @workflow_file_name)
   end
 
+  @spec workflow_dir() :: Path.t()
+  def workflow_dir do
+    workflow_file_path()
+    |> Path.expand()
+    |> Path.dirname()
+  end
+
+  @spec project_root() :: Path.t()
+  def project_root do
+    Application.get_env(:symphony_elixir, :project_root) || workflow_dir()
+  end
+
   @spec set_workflow_file_path(Path.t()) :: :ok
   def set_workflow_file_path(path) when is_binary(path) do
     Application.put_env(:symphony_elixir, :workflow_file_path, path)
@@ -20,9 +32,23 @@ defmodule SymphonyElixir.Workflow do
     :ok
   end
 
+  @spec set_project_root(Path.t()) :: :ok
+  def set_project_root(path) when is_binary(path) do
+    Application.put_env(:symphony_elixir, :project_root, Path.expand(path))
+    maybe_reload_store()
+    :ok
+  end
+
   @spec clear_workflow_file_path() :: :ok
   def clear_workflow_file_path do
     Application.delete_env(:symphony_elixir, :workflow_file_path)
+    maybe_reload_store()
+    :ok
+  end
+
+  @spec clear_project_root() :: :ok
+  def clear_project_root do
+    Application.delete_env(:symphony_elixir, :project_root)
     maybe_reload_store()
     :ok
   end

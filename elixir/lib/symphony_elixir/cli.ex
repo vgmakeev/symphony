@@ -6,12 +6,13 @@ defmodule SymphonyElixir.CLI do
   alias SymphonyElixir.LogFile
 
   @acknowledgement_switch :i_understand_that_this_will_be_running_without_the_usual_guardrails
-  @switches [{@acknowledgement_switch, :boolean}, logs_root: :string, port: :integer]
+  @switches [{@acknowledgement_switch, :boolean}, logs_root: :string, port: :integer, project_root: :string]
 
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
           file_regular?: (String.t() -> boolean()),
           set_workflow_file_path: (String.t() -> :ok | {:error, term()}),
+          set_project_root: (String.t() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
           ensure_all_started: (-> ensure_started_result())
@@ -35,15 +36,17 @@ defmodule SymphonyElixir.CLI do
       {opts, [], []} ->
         with :ok <- require_guardrails_acknowledgement(opts),
              :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
-          run(Path.expand("WORKFLOW.md"), deps)
+             :ok <- maybe_set_server_port(opts, deps),
+             {:ok, workflow_path, project_root} <- resolve_run_paths(nil, opts) do
+          run(workflow_path, project_root, deps)
         end
 
-      {opts, [workflow_path], []} ->
+      {opts, [workflow_or_project_path], []} ->
         with :ok <- require_guardrails_acknowledgement(opts),
              :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
-          run(workflow_path, deps)
+             :ok <- maybe_set_server_port(opts, deps),
+             {:ok, workflow_path, project_root} <- resolve_run_paths(workflow_or_project_path, opts) do
+          run(workflow_path, project_root, deps)
         end
 
       _ ->
@@ -54,9 +57,17 @@ defmodule SymphonyElixir.CLI do
   @spec run(String.t(), deps()) :: :ok | {:error, String.t()}
   def run(workflow_path, deps) do
     expanded_path = Path.expand(workflow_path)
+    run(expanded_path, Path.dirname(expanded_path), deps)
+  end
+
+  @spec run(String.t(), String.t(), deps()) :: :ok | {:error, String.t()}
+  def run(workflow_path, project_root, deps) do
+    expanded_path = Path.expand(workflow_path)
+    expanded_project_root = Path.expand(project_root)
 
     if deps.file_regular?.(expanded_path) do
       :ok = deps.set_workflow_file_path.(expanded_path)
+      :ok = deps.set_project_root.(expanded_project_root)
 
       case deps.ensure_all_started.() do
         {:ok, _started_apps} ->
@@ -72,7 +83,7 @@ defmodule SymphonyElixir.CLI do
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--project-root <path>] [path-to-project-or-WORKFLOW.md]"
   end
 
   @spec runtime_deps() :: deps()
@@ -80,6 +91,7 @@ defmodule SymphonyElixir.CLI do
     %{
       file_regular?: &File.regular?/1,
       set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
+      set_project_root: &SymphonyElixir.Workflow.set_project_root/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
       ensure_all_started: fn -> Application.ensure_all_started(:symphony_elixir) end
@@ -99,6 +111,42 @@ defmodule SymphonyElixir.CLI do
         else
           :ok = deps.set_logs_root.(Path.expand(logs_root))
         end
+    end
+  end
+
+  defp resolve_run_paths(nil, opts) do
+    project_root = project_root_override(opts) || File.cwd!()
+    {:ok, Path.join(project_root, "WORKFLOW.md"), project_root}
+  end
+
+  defp resolve_run_paths(path, opts) when is_binary(path) do
+    expanded_path = Path.expand(path)
+
+    cond do
+      File.dir?(expanded_path) ->
+        project_root = project_root_override(opts) || expanded_path
+        {:ok, Path.join(expanded_path, "WORKFLOW.md"), project_root}
+
+      not File.exists?(expanded_path) and Path.extname(expanded_path) == "" ->
+        project_root = project_root_override(opts) || expanded_path
+        {:ok, Path.join(expanded_path, "WORKFLOW.md"), project_root}
+
+      true ->
+        project_root = project_root_override(opts) || Path.dirname(expanded_path)
+        {:ok, expanded_path, project_root}
+    end
+  end
+
+  defp project_root_override(opts) do
+    case Keyword.get(opts, :project_root) do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          trimmed -> Path.expand(trimmed)
+        end
+
+      _ ->
+        nil
     end
   end
 
