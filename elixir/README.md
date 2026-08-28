@@ -86,9 +86,9 @@ Codex session prompt.
 The fork supports `linear`, `markdown`, and `economic_os` trackers. The
 `economic_os` adapter reads agent-review agendas and confirmed manager SMART
 responses awaiting a critical quality review. Codex records the review through
-the separately scoped mini MCP profile; weak goals stay open with one precise
-challenge, so Symphony does not duplicate business state or impersonate human
-approval.
+one agenda-bound `economic_os_submit_analysis` dynamic tool; weak goals stay
+open with one precise challenge, so Symphony cannot select another agenda,
+duplicate business state or impersonate human approval.
 
 ```yaml
 tracker:

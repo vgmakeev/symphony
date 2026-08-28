@@ -560,7 +560,8 @@ Validation checks:
 
 This section is intentionally redundant so a coding agent can implement the config layer quickly.
 
-- `tracker.kind`: string, required, currently `linear`
+- `tracker.kind`: string, required; supported values are `linear`, `markdown`,
+  and `economic_os`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
@@ -1062,7 +1063,8 @@ Unsupported dynamic tool calls:
 Optional client-side tool extension:
 
 - An implementation may expose a limited set of client-side tools to the app-server session.
-- Current optional standardized tool: `linear_graphql`.
+- Current optional standardized tools: `linear_graphql` and
+  `economic_os_submit_analysis`.
 - If implemented, supported tools should be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names should still return a failure result and continue the session.
@@ -1099,6 +1101,19 @@ Optional client-side tool extension:
   - invalid input, missing auth, or transport failure -> `success=false` with an error payload
 - Return the GraphQL response or error payload as structured tool output that the model can inspect
   in-session.
+
+`economic_os_submit_analysis` extension contract:
+
+- Availability: only when `tracker.kind == "economic_os"`; do not advertise
+  `linear_graphql` in that session.
+- The tool takes `response`, structured `response_data`, and an `outcome` of
+  `answered` or `needs_revision`.
+- The agenda id is bound to the current tracker issue by Symphony and is not a
+  model-provided argument.
+- `answered` submits values through the Economic OS `answer` transition so its
+  validation and state change are atomic. `needs_revision` records the review
+  without closing the agenda.
+- Repeated identical submissions use a deterministic idempotency key.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
 
@@ -1219,7 +1234,7 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+Symphony does not require general-purpose tracker write APIs in the orchestrator.
 
 - Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
   agent using tools defined by the workflow prompt.
@@ -1228,6 +1243,9 @@ Symphony does not require first-class tracker write APIs in the orchestrator.
   `Human Review`) rather than tracker terminal state `Done`.
 - If the optional `linear_graphql` client-side tool extension is implemented, it is still part of
   the agent toolchain rather than orchestrator business logic.
+- For `economic_os`, the single agenda-bound `economic_os_submit_analysis`
+  extension is the allowed write boundary. Economic OS remains responsible for
+  validation, idempotency and state transitions.
 
 ## 12. Prompt Construction and Context Assembly
 

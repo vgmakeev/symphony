@@ -22,6 +22,61 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert description =~ "Linear"
   end
 
+  test "Economic OS exposes only the current-agenda submission tool" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "worker-token"
+    )
+
+    assert [
+             %{
+               "name" => "economic_os_submit_analysis",
+               "inputSchema" => %{
+                 "required" => ["response", "response_data", "outcome"],
+                 "properties" => %{"outcome" => %{"enum" => ["answered", "needs_revision"]}}
+               }
+             }
+           ] = DynamicTool.tool_specs()
+  end
+
+  test "Economic OS submission is bound to the current agenda" do
+    parent = self()
+
+    response =
+      DynamicTool.execute(
+        "economic_os_submit_analysis",
+        %{
+          "response" => "  Cited result  ",
+          "response_data" => %{"review" => %{"status" => "accepted"}},
+          "outcome" => "answered"
+        },
+        issue: %{id: "42"},
+        economic_os_submitter: fn issue_id, text, data, outcome ->
+          send(parent, {:submitted, issue_id, text, data, outcome})
+          :ok
+        end
+      )
+
+    assert_receive {:submitted, "42", "Cited result", %{"review" => %{"status" => "accepted"}}, "answered"}
+    assert response["success"] == true
+    [content] = response["contentItems"]
+    assert Jason.decode!(content["text"]) == %{"agendaId" => "42", "outcome" => "answered"}
+  end
+
+  test "Economic OS submission rejects an unbound agenda" do
+    response =
+      DynamicTool.execute(
+        "economic_os_submit_analysis",
+        %{"response" => "Cited result", "response_data" => %{}, "outcome" => "answered"},
+        economic_os_submitter: fn _issue_id, _text, _data, _outcome ->
+          flunk("submission must not run without the current agenda")
+        end
+      )
+
+    assert response["success"] == false
+  end
+
   test "unsupported tools return a failure payload with the supported tool list" do
     response = DynamicTool.execute("not_a_real_tool", %{})
 

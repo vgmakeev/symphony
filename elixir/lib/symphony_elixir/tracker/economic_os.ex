@@ -3,9 +3,9 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   Thin tracker adapter for agent analysis and manager-goal quality agendas
   owned by Economic OS.
 
-  The adapter reads and claims work. Codex submits the cited response through
-  the agenda's scoped mini MCP profile, so Symphony never becomes business
-  state or result storage.
+  The adapter reads and claims work. Codex can submit only the current agenda's
+  cited analysis through Symphony's bounded dynamic tool; Economic OS remains
+  the owner and validator of business state and results.
   """
 
   @behaviour SymphonyElixir.Tracker
@@ -52,6 +52,29 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) do
     request(:patch, "/#{issue_id}", %{response: body})
+  end
+
+  @spec submit_analysis(String.t(), String.t(), map(), String.t()) :: :ok | {:error, term()}
+  def submit_analysis(issue_id, response, response_data, outcome)
+      when is_binary(issue_id) and is_binary(response) and is_map(response_data) do
+    values = %{response: response, response_data: response_data}
+    idempotency_key = submission_idempotency_key(issue_id, values, outcome)
+
+    case outcome do
+      "answered" ->
+        request(
+          :post,
+          "/#{issue_id}:transition",
+          %{transition: "answer", context: %{}, values: values},
+          idempotency_key: idempotency_key
+        )
+
+      "needs_revision" ->
+        request(:patch, "/#{issue_id}", values, idempotency_key: idempotency_key)
+
+      _ ->
+        {:error, :invalid_analysis_outcome}
+    end
   end
 
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
@@ -158,9 +181,9 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   defp completion_instruction(agenda) do
     if field(agenda, "execution_mode") == "human_review" do
-      "Critically review confirmed manager goals. Leave needs_revision open; answer only accepted goals with required human feedback."
+      "Critically review confirmed manager goals. Submit through economic_os_submit_analysis. Leave needs_revision open; answer only accepted goals with required human feedback."
     else
-      "Patch response/response_data, then call mini_content_transition with transition=answer."
+      "Submit the cited response and structured response_data once through economic_os_submit_analysis with outcome=answered."
     end
   end
 
@@ -172,7 +195,7 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
     request_options = [
       method: method,
       url: endpoint() <> @resource_path <> suffix,
-      headers: headers(),
+      headers: headers(Keyword.get(opts, :idempotency_key)),
       params: Keyword.get(opts, :params, [])
     ]
 
@@ -195,13 +218,19 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   defp endpoint, do: String.trim_trailing(Config.tracker_endpoint(), "/")
 
-  defp headers do
+  defp headers(idempotency_key) do
     [
       {"authorization", "Bearer #{Config.tracker_api_token()}"},
       {"content-type", "application/json"}
     ]
+    |> maybe_idempotency_header(idempotency_key)
     |> maybe_tenant_header(Config.tracker_tenant())
   end
+
+  defp maybe_idempotency_header(headers, nil), do: headers
+
+  defp maybe_idempotency_header(headers, idempotency_key),
+    do: [{"idempotency-key", idempotency_key} | headers]
 
   defp maybe_tenant_header(headers, nil), do: headers
   defp maybe_tenant_header(headers, tenant), do: [{"x-mini-tenant", tenant} | headers]
@@ -214,4 +243,13 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   end
 
   defp normalize_state(value), do: value |> to_string() |> String.trim() |> String.downcase()
+
+  defp submission_idempotency_key(issue_id, values, outcome) do
+    digest =
+      :sha256
+      |> :crypto.hash(Jason.encode!(%{values: values, outcome: outcome}))
+      |> Base.encode16(case: :lower)
+
+    "symphony:agenda:#{issue_id}:submit:#{digest}"
+  end
 end

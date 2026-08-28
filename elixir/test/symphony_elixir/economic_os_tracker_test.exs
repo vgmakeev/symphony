@@ -35,7 +35,7 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
 
     assert hd(issues).identifier == "EOS-AGENDA-1"
     assert hd(issues).labels == ["economic-os", "weekly"]
-    assert hd(issues).description =~ "mini_content_transition"
+    assert hd(issues).description =~ "economic_os_submit_analysis"
     human_issue = Enum.find(issues, &(&1.id == "4"))
     assert human_issue.labels == ["economic-os", "weekly", "goal-quality"]
     assert human_issue.description =~ "response_data"
@@ -109,6 +109,36 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert_receive {:request, options}
     assert options[:method] == :patch
     assert options[:json] == %{response: "Cited result"}
+  end
+
+  test "submits an answered analysis atomically through the agenda transition" do
+    parent = self()
+    stub_request(parent)
+    response_data = %{"_answer_quality_review" => %{"status" => "accepted"}}
+
+    assert :ok = EconomicOS.submit_analysis("7", "Cited result", response_data, "answered")
+    assert_receive {:request, options}
+    assert options[:method] == :post
+    assert options[:url] =~ "/revenue_management_agendas/7:transition"
+    assert options[:json].transition == "answer"
+    assert options[:json].values == %{response: "Cited result", response_data: response_data}
+
+    assert {"idempotency-key", "symphony:agenda:7:submit:" <> digest} =
+             Enum.find(options[:headers], fn {name, _value} -> name == "idempotency-key" end)
+
+    assert byte_size(digest) == 64
+  end
+
+  test "records needs revision without closing the agenda" do
+    parent = self()
+    stub_request(parent)
+    response_data = %{"_quality_review" => %{"status" => "needs_revision"}}
+
+    assert :ok = EconomicOS.submit_analysis("8", "One concrete gap", response_data, "needs_revision")
+    assert_receive {:request, options}
+    assert options[:method] == :patch
+    assert options[:url] =~ "/revenue_management_agendas/8"
+    assert options[:json] == %{response: "One concrete gap", response_data: response_data}
   end
 
   test "validates the dedicated Economic OS token" do
