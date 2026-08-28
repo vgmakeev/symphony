@@ -15,6 +15,8 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   @resource_path "/api/admin/revenue_management_agendas"
   @active_statuses ~w(open in_progress)
+  @page_limit 200
+  @max_agendas 1_000
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
@@ -71,10 +73,25 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   @spec normalize_agenda_for_test(map()) :: Issue.t()
   def normalize_agenda_for_test(agenda), do: to_issue(agenda)
 
-  defp fetch_agendas do
-    case request(:get, "", nil, params: [limit: 1_000, sort: "due_date,id"]) do
-      {:ok, body} when is_map(body) -> {:ok, field(body, "data") || []}
-      other -> other
+  defp fetch_agendas, do: fetch_agendas(0, [])
+
+  defp fetch_agendas(offset, agendas) do
+    limit = min(@page_limit, @max_agendas - length(agendas))
+
+    case request(:get, "", nil, params: [limit: limit, offset: offset, sort: "due_date,id"]) do
+      {:ok, body} when is_map(body) ->
+        page = field(body, "data") || []
+        combined = agendas ++ page
+        has_more? = field(field(body, "meta") || %{}, "has_more") == true
+
+        if has_more? and page != [] and length(combined) < @max_agendas do
+          fetch_agendas(offset + length(page), combined)
+        else
+          {:ok, combined}
+        end
+
+      other ->
+        other
     end
   end
 

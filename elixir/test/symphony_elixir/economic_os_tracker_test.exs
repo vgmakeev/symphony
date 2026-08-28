@@ -52,6 +52,39 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert [%{state: "Cancelled"}] = selected
   end
 
+  test "paginates agendas within the Economic OS page limit" do
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn options ->
+      send(parent, {:request, options})
+      offset = Keyword.get(options[:params], :offset, 0)
+
+      case offset do
+        0 ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"data" => [agenda(1, "open")], "meta" => %{"has_more" => true}}
+           }}
+
+        1 ->
+          {:ok,
+           %{
+             status: 200,
+             body: %{"data" => [agenda(2, "open")], "meta" => %{"has_more" => false}}
+           }}
+      end
+    end)
+
+    assert {:ok, issues} = EconomicOS.fetch_candidate_issues()
+    assert Enum.map(issues, & &1.id) == ["1", "2"]
+
+    assert_receive {:request, first}
+    assert first[:params] == [limit: 200, offset: 0, sort: "due_date,id"]
+    assert_receive {:request, second}
+    assert second[:params] == [limit: 200, offset: 1, sort: "due_date,id"]
+  end
+
   test "claims an agenda through its mini state machine" do
     parent = self()
     stub_request(parent)
