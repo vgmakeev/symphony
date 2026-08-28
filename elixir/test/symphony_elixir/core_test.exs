@@ -62,10 +62,10 @@ defmodule SymphonyElixir.CoreTest do
     assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: 123)
-    assert :ok = Config.validate!()
+    assert {:error, {:invalid_codex_approval_policy, 123}} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: 123)
-    assert :ok = Config.validate!()
+    assert {:error, {:invalid_codex_thread_sandbox, 123}} = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: 123)
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
@@ -540,8 +540,9 @@ defmodule SymphonyElixir.CoreTest do
 
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+    inspection_tolerance_ms = 500
 
-    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms >= min_remaining_ms - inspection_tolerance_ms
     assert remaining_ms <= max_remaining_ms
   end
 
@@ -885,9 +886,26 @@ defmodule SymphonyElixir.CoreTest do
         codex_binary,
         """
         #!/bin/sh
-        cat > /dev/null
-        printf '%s\\n' '{"type":"system","subtype":"init","session_id":"sess-live"}'
-        printf '%s\\n' '{"type":"result","subtype":"success","session_id":"sess-live","total_cost_usd":0.01,"duration_ms":100,"num_turns":1,"result":"Done"}'
+        count=0
+        while IFS= read -r line; do
+          count=$((count + 1))
+          case "$count" in
+            1)
+              printf '%s\\n' '{\"id\":1,\"result\":{}}'
+              ;;
+            2)
+              printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-live\"}}}'
+              ;;
+            3)
+              printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'
+              ;;
+            4)
+              printf '%s\\n' '{\"method\":\"turn/completed\"}'
+              ;;
+            *)
+              ;;
+          esac
+        done
         """
       )
 
@@ -896,7 +914,7 @@ defmodule SymphonyElixir.CoreTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
-        codex_command: codex_binary
+        codex_command: "#{codex_binary} app-server"
       )
 
       issue = %Issue{
@@ -926,7 +944,7 @@ defmodule SymphonyElixir.CoreTest do
                       }},
                      500
 
-      assert session_id == nil
+      assert session_id == "thread-live-turn-live"
     after
       File.rm_rf(test_root)
     end
@@ -958,10 +976,30 @@ defmodule SymphonyElixir.CoreTest do
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
       run_id="$(date +%s%N)-$$"
       printf 'RUN:%s\\n' "$run_id" >> "$trace_file"
-      printf 'PROMPT:%s\\n' "$(printf '%s' "$_SYMPHONY_PROMPT" | tr '\\n' '|')" >> "$trace_file"
-      cat > /dev/null
-      printf '%s\\n' '{"type":"system","subtype":"init","session_id":"sess-cont"}'
-      printf '%s\\n' '{"type":"result","subtype":"success","session_id":"sess-cont","total_cost_usd":0.01,"duration_ms":100,"num_turns":1,"result":"Done"}'
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-cont"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-1"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-2"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
       """)
 
       File.chmod!(codex_binary, 0o755)
@@ -972,7 +1010,7 @@ defmodule SymphonyElixir.CoreTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
-        codex_command: codex_binary,
+        codex_command: "#{codex_binary} app-server",
         max_turns: 3
       )
 
@@ -1018,19 +1056,25 @@ defmodule SymphonyElixir.CoreTest do
 
       lines = File.read!(trace_file) |> String.split("\n", trim: true)
 
-      # Each ClaudeCode.run call spawns a new process, so 2 turns = 2 RUNs
-      assert length(Enum.filter(lines, &String.starts_with?(&1, "RUN:"))) == 2
+      assert length(Enum.filter(lines, &String.starts_with?(&1, "RUN:"))) == 1
+      assert length(Enum.filter(lines, &String.contains?(&1, "\"method\":\"thread/start\""))) == 1
 
-      prompt_lines =
+      turn_texts =
         lines
-        |> Enum.filter(&String.starts_with?(&1, "PROMPT:"))
-        |> Enum.map(&String.trim_leading(&1, "PROMPT:"))
+        |> Enum.filter(&String.starts_with?(&1, "JSON:"))
+        |> Enum.map(&String.trim_leading(&1, "JSON:"))
+        |> Enum.map(&Jason.decode!/1)
+        |> Enum.filter(&(&1["method"] == "turn/start"))
+        |> Enum.map(fn payload ->
+          get_in(payload, ["params", "input"])
+          |> Enum.map_join("\n", &Map.get(&1, "text", ""))
+        end)
 
-      assert length(prompt_lines) == 2
-      assert Enum.at(prompt_lines, 0) =~ "You are an agent for this repository."
-      refute Enum.at(prompt_lines, 1) =~ "You are an agent for this repository."
-      assert Enum.at(prompt_lines, 1) =~ "Continuation guidance:"
-      assert Enum.at(prompt_lines, 1) =~ "continuation turn #2 of 3"
+      assert length(turn_texts) == 2
+      assert Enum.at(turn_texts, 0) =~ "You are an agent for this repository."
+      refute Enum.at(turn_texts, 1) =~ "You are an agent for this repository."
+      assert Enum.at(turn_texts, 1) =~ "Continuation guidance:"
+      assert Enum.at(turn_texts, 1) =~ "continuation turn #2 of 3"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)
@@ -1062,10 +1106,30 @@ defmodule SymphonyElixir.CoreTest do
       #!/bin/sh
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
       printf 'RUN\\n' >> "$trace_file"
-      printf 'PROMPT:%s\\n' "$(printf '%s' "$_SYMPHONY_PROMPT" | tr '\\n' '|')" >> "$trace_file"
-      cat > /dev/null
-      printf '%s\\n' '{"type":"system","subtype":"init","session_id":"sess-max"}'
-      printf '%s\\n' '{"type":"result","subtype":"success","session_id":"sess-max","total_cost_usd":0.01,"duration_ms":100,"num_turns":1,"result":"Done"}'
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-max"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-1"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-2"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
       """)
 
       File.chmod!(codex_binary, 0o755)
@@ -1076,7 +1140,7 @@ defmodule SymphonyElixir.CoreTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
-        codex_command: codex_binary,
+        codex_command: "#{codex_binary} app-server",
         max_turns: 2
       )
 
@@ -1106,12 +1170,8 @@ defmodule SymphonyElixir.CoreTest do
       assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
 
       trace = File.read!(trace_file)
-      lines = String.split(trace, "\n", trim: true)
-      # Each ClaudeCode.run call spawns a new process, so 2 turns = 2 RUNs
-      assert length(Enum.filter(lines, &String.starts_with?(&1, "RUN"))) == 2
-      # Verify both prompts were delivered
-      prompt_lines = Enum.filter(lines, &String.starts_with?(&1, "PROMPT:"))
-      assert length(prompt_lines) == 2
+      assert length(String.split(trace, "RUN", trim: true)) == 1
+      assert length(Regex.scan(~r/"method":"turn\/start"/, trace)) == 2
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)

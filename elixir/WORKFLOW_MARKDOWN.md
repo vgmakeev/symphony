@@ -20,7 +20,7 @@ agent:
   max_concurrent_agents: 3
   max_turns: 5
 codex:
-  command: claude
+  command: codex app-server
 ---
 
 You are working on a task `{{ issue.identifier }}`

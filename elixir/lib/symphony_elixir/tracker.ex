@@ -41,6 +41,7 @@ defmodule SymphonyElixir.Tracker do
     case Config.tracker_kind() do
       "memory" -> SymphonyElixir.Tracker.Memory
       "markdown" -> SymphonyElixir.Tracker.Markdown
+      "economic_os" -> SymphonyElixir.Tracker.EconomicOS
       _ -> SymphonyElixir.Linear.Adapter
     end
   end

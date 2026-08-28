@@ -28,7 +28,7 @@ defmodule SymphonyElixir.Config do
   @default_max_concurrent_agents 10
   @default_agent_max_turns 20
   @default_max_retry_backoff_ms 300_000
-  @default_codex_command "claude"
+  @default_codex_command "codex app-server"
   @default_codex_turn_timeout_ms 3_600_000
   @default_codex_read_timeout_ms 5_000
   @default_codex_stall_timeout_ms 300_000
@@ -62,7 +62,8 @@ defmodule SymphonyElixir.Config do
                                    type: {:list, :string},
                                    default: @default_terminal_states
                                  ],
-                                 tasks_dir: [type: {:or, [:string, nil]}, default: nil]
+                                 tasks_dir: [type: {:or, [:string, nil]}, default: nil],
+                                 tenant: [type: {:or, [:string, nil]}, default: nil]
                                ]
                              ],
                              polling: [
@@ -186,14 +187,34 @@ defmodule SymphonyElixir.Config do
 
   @spec linear_endpoint() :: String.t()
   def linear_endpoint do
-    get_in(validated_workflow_options(), [:tracker, :endpoint])
+    tracker_endpoint()
   end
 
   @spec linear_api_token() :: String.t() | nil
   def linear_api_token do
+    tracker_api_token("LINEAR_API_KEY")
+  end
+
+  @spec tracker_endpoint() :: String.t()
+  def tracker_endpoint do
+    validated_workflow_options()
+    |> get_in([:tracker, :endpoint])
+    |> resolve_env_value(System.get_env("ECONOMIC_OS_URL"))
+  end
+
+  @spec tracker_api_token(String.t()) :: String.t() | nil
+  def tracker_api_token(env_name \\ "ECONOMIC_OS_API_TOKEN") do
     validated_workflow_options()
     |> get_in([:tracker, :api_key])
-    |> resolve_env_value(System.get_env("LINEAR_API_KEY"))
+    |> resolve_env_value(System.get_env(env_name))
+    |> normalize_secret_value()
+  end
+
+  @spec tracker_tenant() :: String.t() | nil
+  def tracker_tenant do
+    validated_workflow_options()
+    |> get_in([:tracker, :tenant])
+    |> resolve_env_value(System.get_env("MINI_TENANT"))
     |> normalize_secret_value()
   end
 
@@ -367,7 +388,8 @@ defmodule SymphonyElixir.Config do
     with {:ok, _workflow} <- current_workflow(),
          :ok <- require_tracker_kind(),
          :ok <- require_linear_token(),
-         :ok <- require_linear_project() do
+         :ok <- require_linear_project(),
+         :ok <- require_valid_codex_runtime_settings() do
       require_codex_command()
     end
   end
@@ -391,6 +413,7 @@ defmodule SymphonyElixir.Config do
       "linear" -> :ok
       "memory" -> :ok
       "markdown" -> :ok
+      "economic_os" -> :ok
       nil -> {:error, :missing_tracker_kind}
       other -> {:error, {:unsupported_tracker_kind, other}}
     end
@@ -403,6 +426,13 @@ defmodule SymphonyElixir.Config do
           :ok
         else
           {:error, :missing_linear_api_token}
+        end
+
+      "economic_os" ->
+        if is_binary(tracker_api_token()) do
+          :ok
+        else
+          {:error, :missing_economic_os_api_token}
         end
 
       _ ->
@@ -432,6 +462,12 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  defp require_valid_codex_runtime_settings do
+    case codex_runtime_settings() do
+      {:ok, _settings} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp validated_workflow_options do
     workflow_config()
@@ -461,6 +497,7 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:active_states, csv_value(Map.get(section, "active_states")))
     |> put_if_present(:terminal_states, csv_value(Map.get(section, "terminal_states")))
     |> put_if_present(:tasks_dir, binary_value(Map.get(section, "tasks_dir")))
+    |> put_if_present(:tenant, scalar_string_value(Map.get(section, "tenant")))
   end
 
   @spec markdown_tasks_dir() :: String.t()

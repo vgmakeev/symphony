@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Orchestrator do
   @moduledoc """
-  Polls tracker and dispatches repository copies to Claude Code-backed workers.
+  Polls trackers and dispatches repository copies to Codex-backed workers.
   """
 
   use GenServer
@@ -1013,14 +1013,6 @@ defmodule SymphonyElixir.Orchestrator do
       token_delta
     }
   end
-
-  defp codex_app_server_pid_for_update(_existing, %{claude_code_pid: pid})
-       when is_binary(pid),
-       do: pid
-
-  defp codex_app_server_pid_for_update(_existing, %{claude_code_pid: pid})
-       when is_integer(pid),
-       do: Integer.to_string(pid)
 
   defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})
        when is_binary(pid),

@@ -8,7 +8,6 @@ defmodule SymphonyElixir.TestSupport do
 
       alias SymphonyElixir.AgentRunner
       alias SymphonyElixir.CLI
-      alias SymphonyElixir.ClaudeCode
       alias SymphonyElixir.Codex.AppServer
       alias SymphonyElixir.Config
       alias SymphonyElixir.HttpServer
@@ -44,6 +43,7 @@ defmodule SymphonyElixir.TestSupport do
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
           Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
+          Application.delete_env(:symphony_elixir, :economic_os_request_fun)
           File.rm_rf(workflow_root)
         end)
 
@@ -100,13 +100,14 @@ defmodule SymphonyElixir.TestSupport do
           tracker_assignee: nil,
           tracker_active_states: ["Todo", "In Progress"],
           tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+          tracker_tenant: nil,
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
           max_concurrent_agents: 10,
           max_turns: 20,
           max_retry_backoff_ms: 300_000,
           max_concurrent_agents_by_state: %{},
-          codex_command: "claude",
+          codex_command: "codex app-server",
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
           codex_thread_sandbox: "workspace-write",
           codex_turn_sandbox_policy: nil,
@@ -135,6 +136,7 @@ defmodule SymphonyElixir.TestSupport do
     tracker_assignee = Keyword.get(config, :tracker_assignee)
     tracker_active_states = Keyword.get(config, :tracker_active_states)
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
+    tracker_tenant = Keyword.get(config, :tracker_tenant)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -171,6 +173,7 @@ defmodule SymphonyElixir.TestSupport do
         "  assignee: #{yaml_value(tracker_assignee)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
         "  terminal_states: #{yaml_value(tracker_terminal_states)}",
+        "  tenant: #{yaml_value(tracker_tenant)}",
         "polling:",
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",

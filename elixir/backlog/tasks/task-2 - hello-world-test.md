@@ -15,7 +15,7 @@ priority: high
 
 Создать простой Python-скрипт `hello.py` в корне workspace, который:
 
-1. Выводит "Hello from Symphony + Claude Code!"
+1. Выводит "Hello from Symphony + Codex!"
 2. Выводит текущую дату и время
 3. Выводит версию Python
 

@@ -83,6 +83,21 @@ Optional flags:
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
 
+The fork supports `linear`, `markdown`, and `economic_os` trackers. The
+`economic_os` adapter reads agent-review agendas and confirmed manager SMART
+responses awaiting a critical quality review. Codex records the review through
+the separately scoped mini MCP profile; weak goals stay open with one precise
+challenge, so Symphony does not duplicate business state or impersonate human
+approval.
+
+```yaml
+tracker:
+  kind: economic_os
+  endpoint: $ECONOMIC_OS_URL
+  api_key: $ECONOMIC_OS_API_TOKEN
+  tenant: $MINI_TENANT
+```
+
 Minimal example:
 
 ```md
