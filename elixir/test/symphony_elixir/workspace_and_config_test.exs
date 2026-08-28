@@ -646,6 +646,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       workspace_root: nil,
       max_concurrent_agents: nil,
       codex_approval_policy: nil,
+      codex_auto_approve_tool_requests: nil,
       codex_thread_sandbox: nil,
       codex_turn_sandbox_policy: nil,
       codex_turn_timeout_ms: nil,
@@ -670,6 +671,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              }
            }
 
+    refute Config.codex_auto_approve_tool_requests?()
+
     assert Config.codex_thread_sandbox() == "workspace-write"
 
     assert Config.codex_turn_sandbox_policy() == %{
@@ -687,6 +690,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server --model gpt-5.3-codex")
     assert Config.codex_command() == "codex app-server --model gpt-5.3-codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_auto_approve_tool_requests: true)
+    assert Config.codex_auto_approve_tool_requests?()
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_approval_policy: "on-request",

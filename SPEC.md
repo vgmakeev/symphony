@@ -431,6 +431,13 @@ fields locally if they want stricter startup checks.
   - The launched process must speak a compatible app-server protocol over stdio.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
+- `auto_approve_tool_requests` (boolean)
+  - Default: `false`.
+  - When enabled, the non-interactive client may answer recognized
+    `item/tool/requestUserInput` approval prompts with the session-scoped approve
+    choice. It must not approve command execution or file-change requests.
+  - Use only with a bounded set of registered app/MCP tools; Codex
+    `approval_policy` remains the authority for sandbox, rules and elicitations.
 - `thread_sandbox` (Codex `SandboxMode` value)
   - Default: implementation-defined.
 - `turn_sandbox_policy` (Codex `SandboxPolicy` value)
@@ -570,6 +577,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
+- `codex.auto_approve_tool_requests`: boolean, default `false`
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
 - `codex.turn_timeout_ms`: integer, default `3600000`

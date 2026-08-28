@@ -118,7 +118,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server fails when command execution approval is required under safer defaults" do
+  test "bounded tool auto-approval still rejects command execution approval" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -159,7 +159,8 @@ defmodule SymphonyElixir.AppServerTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        codex_command: "#{codex_binary} app-server"
+        codex_command: "#{codex_binary} app-server",
+        codex_auto_approve_tool_requests: true
       )
 
       issue = %Issue{
@@ -318,7 +319,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server auto-approves MCP tool approval prompts when approval policy is never" do
+  test "app server auto-approves MCP tool prompts under bounded tool policy" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -380,7 +381,7 @@ defmodule SymphonyElixir.AppServerTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         codex_command: "#{codex_binary} app-server",
-        codex_approval_policy: "never"
+        codex_auto_approve_tool_requests: true
       )
 
       issue = %Issue{

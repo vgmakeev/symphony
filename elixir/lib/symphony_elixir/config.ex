@@ -32,6 +32,7 @@ defmodule SymphonyElixir.Config do
   @default_codex_turn_timeout_ms 3_600_000
   @default_codex_read_timeout_ms 5_000
   @default_codex_stall_timeout_ms 300_000
+  @default_codex_auto_approve_tool_requests false
   @default_codex_approval_policy %{
     "reject" => %{
       "sandbox_approval" => true,
@@ -118,6 +119,10 @@ defmodule SymphonyElixir.Config do
                                  stall_timeout_ms: [
                                    type: :integer,
                                    default: @default_codex_stall_timeout_ms
+                                 ],
+                                 auto_approve_tool_requests: [
+                                   type: :boolean,
+                                   default: @default_codex_auto_approve_tool_requests
                                  ]
                                ]
                              ],
@@ -311,6 +316,11 @@ defmodule SymphonyElixir.Config do
       {:ok, approval_policy} -> approval_policy
       {:error, _reason} -> @default_codex_approval_policy
     end
+  end
+
+  @spec codex_auto_approve_tool_requests?() :: boolean()
+  def codex_auto_approve_tool_requests? do
+    get_in(validated_workflow_options(), [:codex, :auto_approve_tool_requests])
   end
 
   @spec codex_thread_sandbox() :: String.t()
@@ -535,6 +545,10 @@ defmodule SymphonyElixir.Config do
     |> put_if_present(:turn_timeout_ms, integer_value(Map.get(section, "turn_timeout_ms")))
     |> put_if_present(:read_timeout_ms, integer_value(Map.get(section, "read_timeout_ms")))
     |> put_if_present(:stall_timeout_ms, integer_value(Map.get(section, "stall_timeout_ms")))
+    |> put_if_present(
+      :auto_approve_tool_requests,
+      boolean_value(Map.get(section, "auto_approve_tool_requests"))
+    )
   end
 
   defp extract_hooks_options(section) do

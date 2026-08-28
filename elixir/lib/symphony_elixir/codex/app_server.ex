@@ -17,7 +17,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           port: port(),
           metadata: map(),
           approval_policy: String.t() | map(),
-          auto_approve_requests: boolean(),
+          approval_behavior: %{all: boolean(), tool_requests: boolean()},
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
           thread_id: String.t(),
@@ -49,7 +49,12 @@ defmodule SymphonyElixir.Codex.AppServer do
            port: port,
            metadata: metadata,
            approval_policy: session_policies.approval_policy,
-           auto_approve_requests: session_policies.approval_policy == "never",
+           approval_behavior: %{
+             all: session_policies.approval_policy == "never",
+             tool_requests:
+               session_policies.approval_policy == "never" or
+                 Config.codex_auto_approve_tool_requests?()
+           },
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
            thread_id: thread_id,
@@ -69,7 +74,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           port: port,
           metadata: metadata,
           approval_policy: approval_policy,
-          auto_approve_requests: auto_approve_requests,
+          approval_behavior: approval_behavior,
           turn_sandbox_policy: turn_sandbox_policy,
           thread_id: thread_id,
           workspace: workspace
@@ -101,7 +106,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata
         )
 
-        case await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
+        case await_turn_completion(port, on_message, tool_executor, approval_behavior) do
           {:ok, result} ->
             Logger.info("Codex session completed for #{issue_context(issue)} session_id=#{session_id}")
 
@@ -400,7 +405,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          method,
          timeout_ms,
          tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     metadata = metadata_from_message(port, payload)
 
@@ -412,7 +417,7 @@ defmodule SymphonyElixir.Codex.AppServer do
            on_message,
            metadata,
            tool_executor,
-           auto_approve_requests
+           approval_behavior
          ) do
       :input_required ->
         emit_message(
@@ -425,7 +430,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         {:error, {:turn_input_required, payload}}
 
       :approved ->
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(port, on_message, timeout_ms, "", tool_executor, approval_behavior)
 
       :approval_required ->
         emit_message(
@@ -459,7 +464,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           )
 
           Logger.debug("Codex notification: #{inspect(method)}")
-          receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+          receive_loop(port, on_message, timeout_ms, "", tool_executor, approval_behavior)
         end
     end
   end
@@ -472,7 +477,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          _tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     approve_or_require(
       port,
@@ -482,7 +487,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      approval_behavior.all
     )
   end
 
@@ -494,7 +499,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          tool_executor,
-         _auto_approve_requests
+         _approval_behavior
        ) do
     tool_name = tool_call_name(params)
     arguments = tool_call_arguments(params)
@@ -526,7 +531,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          _tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     approve_or_require(
       port,
@@ -536,7 +541,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      approval_behavior.all
     )
   end
 
@@ -548,7 +553,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          _tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     approve_or_require(
       port,
@@ -558,7 +563,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      approval_behavior.all
     )
   end
 
@@ -570,7 +575,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          _tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     approve_or_require(
       port,
@@ -580,7 +585,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      approval_behavior.all
     )
   end
 
@@ -592,7 +597,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          on_message,
          metadata,
          _tool_executor,
-         auto_approve_requests
+         approval_behavior
        ) do
     maybe_auto_answer_tool_request_user_input(
       port,
@@ -602,7 +607,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      approval_behavior.tool_requests
     )
   end
 
@@ -614,7 +619,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          _on_message,
          _metadata,
          _tool_executor,
-         _auto_approve_requests
+         _approval_behavior
        ) do
     :unhandled
   end
