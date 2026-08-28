@@ -148,6 +148,8 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
         manager_response: field(agenda, "response"),
         response_data: field(agenda, "response_data") || %{},
         source_freshness: field(agenda, "source_freshness") || %{},
+        agent_preparation_status: field(agenda, "agent_preparation_status"),
+        agent_preparation: field(agenda, "agent_preparation") || %{},
         completion: completion_instruction(agenda)
       },
       pretty: true
@@ -161,7 +163,12 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   defp candidate?(agenda) do
     field(agenda, "status") in @active_statuses and
-      (field(agenda, "execution_mode") == "agent_review" or manager_goal_ready?(agenda))
+      (agent_review_ready?(agenda) or manager_goal_ready?(agenda))
+  end
+
+  defp agent_review_ready?(agenda) do
+    field(agenda, "execution_mode") == "agent_review" and
+      field(agenda, "agent_preparation_status") == "prepared"
   end
 
   defp manager_goal_ready?(agenda) do

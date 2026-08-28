@@ -170,7 +170,11 @@ defmodule SymphonyElixir.Workspace do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
+        System.cmd("sh", ["-lc", command],
+          cd: workspace,
+          stderr_to_stdout: true,
+          env: hook_environment(issue_context)
+        )
       end)
 
     case Task.yield(task, timeout_ms) do
@@ -184,6 +188,13 @@ defmodule SymphonyElixir.Workspace do
 
         {:error, {:workspace_hook_timeout, hook_name, timeout_ms}}
     end
+  end
+
+  defp hook_environment(%{issue_id: issue_id, issue_identifier: issue_identifier}) do
+    [
+      {"SYMPHONY_ISSUE_ID", to_string(issue_id || "")},
+      {"SYMPHONY_ISSUE_IDENTIFIER", to_string(issue_identifier || "issue")}
+    ]
   end
 
   defp handle_hook_command_result({_output, 0}, _workspace, _issue_id, _hook_name) do

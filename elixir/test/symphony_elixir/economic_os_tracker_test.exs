@@ -19,6 +19,7 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
       agenda(1, "open"),
       agenda(2, "in_progress"),
       agenda(3, "answered"),
+      agenda(7, "open", "pending"),
       human_goal_agenda(4, true, nil),
       human_goal_agenda(5, false, nil),
       human_goal_agenda(6, true, "needs_revision")
@@ -36,6 +37,7 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert hd(issues).identifier == "EOS-AGENDA-1"
     assert hd(issues).labels == ["economic-os", "weekly"]
     assert hd(issues).description =~ "economic_os_submit_analysis"
+    assert hd(issues).description =~ "agent_preparation"
     human_issue = Enum.find(issues, &(&1.id == "4"))
     assert human_issue.labels == ["economic-os", "weekly", "goal-quality"]
     assert human_issue.description =~ "response_data"
@@ -167,7 +169,7 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     end)
   end
 
-  defp agenda(id, status) do
+  defp agenda(id, status, preparation_status \\ "prepared") do
     %{
       "id" => id,
       "agenda_key" => "weekly:2099-01-05:agent_review:not_required:none",
@@ -180,7 +182,9 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
       "due_date" => "2099-01-06",
       "items" => [%{"code" => "portfolio_anomalies"}],
       "evidence" => %{},
-      "source_freshness" => %{}
+      "source_freshness" => %{},
+      "agent_preparation_status" => preparation_status,
+      "agent_preparation" => %{"repositories" => []}
     }
   end
 
