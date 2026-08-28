@@ -190,10 +190,15 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp hook_environment(%{issue_id: issue_id, issue_identifier: issue_identifier}) do
+  defp hook_environment(issue_context) do
+    issue_id = issue_context.issue_id
+    issue_identifier = issue_context.issue_identifier
+    issue_labels = Map.get(issue_context, :issue_labels, [])
+
     [
       {"SYMPHONY_ISSUE_ID", to_string(issue_id || "")},
-      {"SYMPHONY_ISSUE_IDENTIFIER", to_string(issue_identifier || "issue")}
+      {"SYMPHONY_ISSUE_IDENTIFIER", to_string(issue_identifier || "issue")},
+      {"SYMPHONY_ISSUE_LABELS", Enum.join(issue_labels, ",")}
     ]
   end
 
@@ -266,24 +271,27 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
+  defp issue_context(%{id: issue_id, identifier: identifier} = issue) do
     %{
       issue_id: issue_id,
-      issue_identifier: identifier || "issue"
+      issue_identifier: identifier || "issue",
+      issue_labels: Map.get(issue, :labels, []) || []
     }
   end
 
   defp issue_context(identifier) when is_binary(identifier) do
     %{
       issue_id: nil,
-      issue_identifier: identifier
+      issue_identifier: identifier,
+      issue_labels: []
     }
   end
 
   defp issue_context(_identifier) do
     %{
       issue_id: nil,
-      issue_identifier: "issue"
+      issue_identifier: "issue",
+      issue_labels: []
     }
   end
 
