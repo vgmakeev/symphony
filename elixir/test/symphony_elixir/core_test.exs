@@ -1269,7 +1269,7 @@ defmodule SymphonyElixir.CoreTest do
                  |> Jason.decode!()
                  |> then(fn payload ->
                    expected_approval_policy = %{
-                     "reject" => %{
+                     "granular" => %{
                        "sandbox_approval" => true,
                        "rules" => true,
                        "mcp_elicitations" => true
@@ -1302,7 +1302,7 @@ defmodule SymphonyElixir.CoreTest do
                  |> Jason.decode!()
                  |> then(fn payload ->
                    expected_approval_policy = %{
-                     "reject" => %{
+                     "granular" => %{
                        "sandbox_approval" => true,
                        "rules" => true,
                        "mcp_elicitations" => true

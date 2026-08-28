@@ -664,7 +664,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.codex_command() == "codex app-server"
 
     assert Config.codex_approval_policy() == %{
-             "reject" => %{
+             "granular" => %{
                "sandbox_approval" => true,
                "rules" => true,
                "mcp_elicitations" => true
@@ -755,7 +755,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
 
     assert Config.codex_approval_policy() == %{
-             "reject" => %{
+             "granular" => %{
                "sandbox_approval" => true,
                "rules" => true,
                "mcp_elicitations" => true

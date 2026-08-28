@@ -431,6 +431,8 @@ fields locally if they want stricter startup checks.
   - The launched process must speak a compatible app-server protocol over stdio.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
+  - Object variants must preserve the Codex wire tag; for example, granular
+    policy is encoded as `{"granular": {...}}`, not as its inner rule map.
 - `auto_approve_tool_requests` (boolean)
   - Default: `false`.
   - When enabled, the non-interactive client may answer recognized

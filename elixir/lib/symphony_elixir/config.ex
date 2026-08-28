@@ -34,7 +34,7 @@ defmodule SymphonyElixir.Config do
   @default_codex_stall_timeout_ms 300_000
   @default_codex_auto_approve_tool_requests false
   @default_codex_approval_policy %{
-    "reject" => %{
+    "granular" => %{
       "sandbox_approval" => true,
       "rules" => true,
       "mcp_elicitations" => true
