@@ -14,15 +14,15 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     :ok
   end
 
-  test "selects active agent agendas and confirmed manager goals awaiting review" do
+  test "selects active agent agendas and new manager inputs awaiting review" do
     stub_agendas([
       agenda(1, "open"),
       agenda(2, "in_progress"),
       agenda(3, "answered"),
       agenda(7, "open", "pending"),
-      human_goal_agenda(4, true, nil),
-      human_goal_agenda(5, false, nil),
-      human_goal_agenda(6, true, "needs_revision")
+      human_input_agenda(4, "new-input", nil),
+      human_input_agenda(5, "reviewed-input", "reviewed-input"),
+      human_input_agenda(6, "newer-input", "old-input")
     ])
 
     assert Tracker.adapter() == EconomicOS
@@ -31,7 +31,8 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert Enum.map(issues, &{&1.id, &1.state}) == [
              {"1", "Todo"},
              {"2", "In Progress"},
-             {"4", "Todo"}
+             {"4", "Todo"},
+             {"6", "Todo"}
            ]
 
     assert hd(issues).identifier == "EOS-AGENDA-1"
@@ -39,9 +40,10 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert hd(issues).description =~ "economic_os_submit_analysis"
     assert hd(issues).description =~ "agent_preparation"
     human_issue = Enum.find(issues, &(&1.id == "4"))
-    assert human_issue.labels == ["economic-os", "weekly", "goal-quality"]
+    assert human_issue.labels == ["economic-os", "weekly", "human-input-review"]
     assert human_issue.description =~ "response_data"
     assert human_issue.description =~ "needs_revision"
+    assert human_issue.description =~ "follow_up_question"
   end
 
   test "fetches terminal states and exact agenda ids without owning their state" do
@@ -188,21 +190,12 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     }
   end
 
-  defp human_goal_agenda(id, confirmed, quality_status) do
-    quality_review =
-      if quality_status, do: %{"status" => quality_status}, else: nil
-
+  defp human_input_agenda(id, input_digest, reviewed_digest) do
     agenda(id, "open")
     |> Map.put("execution_mode", "human_review")
-    |> Map.put("response", "Хотим улучшить всё")
     |> Map.put("response_data", %{
-      "items" => %{
-        "project_week_goal:project:11" => %{
-          "confirmed" => confirmed,
-          "goal" => "Хотим улучшить всё",
-          "_quality_review" => quality_review
-        }
-      }
+      "_manager_input" => %{"digest" => input_digest, "comments" => []},
+      "_manager_review" => %{"input_digest" => reviewed_digest}
     })
   end
 end

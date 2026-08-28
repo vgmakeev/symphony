@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Tracker.EconomicOS do
   @moduledoc """
-  Thin tracker adapter for agent analysis and manager-goal quality agendas
+  Thin tracker adapter for agent analysis and human-input quality agendas
   owned by Economic OS.
 
   The adapter reads and claims work. Codex can submit only the current agenda's
@@ -163,7 +163,7 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   defp candidate?(agenda) do
     field(agenda, "status") in @active_statuses and
-      (agent_review_ready?(agenda) or manager_goal_ready?(agenda))
+      (agent_review_ready?(agenda) or manager_input_ready?(agenda))
   end
 
   defp agent_review_ready?(agenda) do
@@ -171,24 +171,25 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
       field(agenda, "agent_preparation_status") == "prepared"
   end
 
-  defp manager_goal_ready?(agenda) do
-    field(agenda, "execution_mode") == "human_review" and
-      Enum.any?(field(field(agenda, "response_data") || %{}, "items") || %{}, fn {_key, response} ->
-        quality_review = field(response, "_quality_review")
+  defp manager_input_ready?(agenda) do
+    response_data = field(agenda, "response_data") || %{}
+    manager_input = field(response_data, "_manager_input") || %{}
+    manager_review = field(response_data, "_manager_review") || %{}
+    input_digest = field(manager_input, "digest")
 
-        field(response, "confirmed") == true and
-          (is_nil(quality_review) or field(quality_review, "status") == "pending")
-      end)
+    field(agenda, "execution_mode") == "human_review" and
+      is_binary(input_digest) and input_digest != "" and
+      field(manager_review, "input_digest") != input_digest
   end
 
   defp agenda_labels(agenda) do
     base = ["economic-os", to_string(field(agenda, "cadence"))]
-    if field(agenda, "execution_mode") == "human_review", do: base ++ ["goal-quality"], else: base
+    if field(agenda, "execution_mode") == "human_review", do: base ++ ["human-input-review"], else: base
   end
 
   defp completion_instruction(agenda) do
     if field(agenda, "execution_mode") == "human_review" do
-      "Critically review confirmed manager goals. Submit through economic_os_submit_analysis. Leave needs_revision open; answer only accepted goals with required human feedback."
+      "Critically review the new raw manager input against cited evidence, prior context and every material response contract. Structure only facts and commitments the human actually supplied; do not invent or silently rewrite them. Submit answered only with accepted quality evidence and _manager_review bound to the current input digest. Otherwise leave needs_revision open with _manager_review.status=needs_revision and exactly one highest-leverage collegial follow_up_question."
     else
       "Submit the cited response and structured response_data once through economic_os_submit_analysis with outcome=answered."
     end
