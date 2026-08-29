@@ -1289,7 +1289,6 @@ defmodule SymphonyElixir.CoreTest do
       expected_turn_sandbox_policy = %{
         "type" => "workspaceWrite",
         "writableRoots" => [Path.expand(workspace)],
-        "readOnlyAccess" => %{"type" => "fullAccess"},
         "networkAccess" => false,
         "excludeTmpdirEnvVar" => false,
         "excludeSlashTmp" => false
@@ -1408,7 +1407,7 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
-  test "app server startup payload uses configurable approval and sandbox settings from workflow config" do
+  test "app server startup payload defers sandbox fields to a permission profile" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1469,11 +1468,7 @@ defmodule SymphonyElixir.CoreTest do
         workspace_root: workspace_root,
         codex_command: "#{codex_binary} app-server",
         codex_approval_policy: "on-request",
-        codex_thread_sandbox: "workspace-write",
-        codex_turn_sandbox_policy: %{
-          type: "workspaceWrite",
-          writableRoots: [Path.expand(workspace), Path.join(Path.expand(workspace_root), ".cache")]
-        }
+        codex_permission_profile: "economic-os-job"
       )
 
       issue = %Issue{
@@ -1498,17 +1493,12 @@ defmodule SymphonyElixir.CoreTest do
                  |> then(fn payload ->
                    payload["method"] == "thread/start" &&
                      get_in(payload, ["params", "approvalPolicy"]) == "on-request" &&
-                     get_in(payload, ["params", "sandbox"]) == "workspace-write"
+                     not Map.has_key?(payload["params"], "sandbox")
                  end)
                else
                  false
                end
              end)
-
-      expected_turn_policy = %{
-        "type" => "workspaceWrite",
-        "writableRoots" => [Path.expand(workspace), Path.join(Path.expand(workspace_root), ".cache")]
-      }
 
       assert Enum.any?(lines, fn line ->
                if String.starts_with?(line, "JSON:") do
@@ -1518,7 +1508,7 @@ defmodule SymphonyElixir.CoreTest do
                  |> then(fn payload ->
                    payload["method"] == "turn/start" &&
                      get_in(payload, ["params", "approvalPolicy"]) == "on-request" &&
-                     get_in(payload, ["params", "sandboxPolicy"]) == expected_turn_policy
+                     not Map.has_key?(payload["params"], "sandboxPolicy")
                  end)
                else
                  false

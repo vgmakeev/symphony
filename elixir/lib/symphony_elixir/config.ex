@@ -169,8 +169,9 @@ defmodule SymphonyElixir.Config do
   @type tracker_kind :: String.t() | nil
   @type codex_runtime_settings :: %{
           approval_policy: String.t() | map(),
-          thread_sandbox: String.t(),
-          turn_sandbox_policy: map()
+          permission_profile: String.t() | nil,
+          thread_sandbox: String.t() | nil,
+          turn_sandbox_policy: map() | nil
         }
   @type workspace_hooks :: %{
           after_create: String.t() | nil,
@@ -407,11 +408,13 @@ defmodule SymphonyElixir.Config do
   @spec codex_runtime_settings(Path.t() | nil) :: {:ok, codex_runtime_settings()} | {:error, term()}
   def codex_runtime_settings(workspace \\ nil) do
     with {:ok, approval_policy} <- resolve_codex_approval_policy(),
-         {:ok, thread_sandbox} <- resolve_codex_thread_sandbox(),
-         {:ok, turn_sandbox_policy} <- resolve_codex_turn_sandbox_policy(workspace) do
+         {:ok, permission_profile} <- resolve_codex_permission_profile(),
+         {:ok, thread_sandbox, turn_sandbox_policy} <-
+           resolve_codex_execution_policy(permission_profile, workspace) do
       {:ok,
        %{
          approval_policy: approval_policy,
+         permission_profile: permission_profile,
          thread_sandbox: thread_sandbox,
          turn_sandbox_policy: turn_sandbox_policy
        }}
@@ -795,6 +798,31 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  defp resolve_codex_permission_profile do
+    case fetch_value([["codex", "permission_profile"]], :missing) do
+      value when value in [:missing, nil] ->
+        {:ok, nil}
+
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> {:error, {:invalid_codex_permission_profile, value}}
+          profile -> {:ok, profile}
+        end
+
+      value ->
+        {:error, {:invalid_codex_permission_profile, value}}
+    end
+  end
+
+  defp resolve_codex_execution_policy(nil, workspace) do
+    with {:ok, thread_sandbox} <- resolve_codex_thread_sandbox(),
+         {:ok, turn_sandbox_policy} <- resolve_codex_turn_sandbox_policy(workspace) do
+      {:ok, thread_sandbox, turn_sandbox_policy}
+    end
+  end
+
+  defp resolve_codex_execution_policy(_profile, _workspace), do: {:ok, nil, nil}
+
   defp resolve_codex_turn_sandbox_policy(workspace) do
     case fetch_value([["codex", "turn_sandbox_policy"]], :missing) do
       :missing ->
@@ -822,7 +850,6 @@ defmodule SymphonyElixir.Config do
     %{
       "type" => "workspaceWrite",
       "writableRoots" => [writable_root],
-      "readOnlyAccess" => %{"type" => "fullAccess"},
       "networkAccess" => false,
       "excludeTmpdirEnvVar" => false,
       "excludeSlashTmp" => false

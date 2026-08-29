@@ -18,8 +18,9 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata: map(),
           approval_policy: String.t() | map(),
           approval_behavior: %{all: boolean(), tool_requests: boolean()},
-          thread_sandbox: String.t(),
-          turn_sandbox_policy: map(),
+          permission_profile: String.t() | nil,
+          thread_sandbox: String.t() | nil,
+          turn_sandbox_policy: map() | nil,
           thread_id: String.t(),
           workspace: Path.t()
         }
@@ -55,6 +56,7 @@ defmodule SymphonyElixir.Codex.AppServer do
                session_policies.approval_policy == "never" or
                  Config.codex_auto_approve_tool_requests?()
            },
+           permission_profile: session_policies.permission_profile,
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
            thread_id: thread_id,
@@ -233,15 +235,18 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}) do
-    send_message(port, %{
-      "method" => "thread/start",
-      "id" => @thread_start_id,
-      "params" => %{
+    params =
+      %{
         "approvalPolicy" => approval_policy,
-        "sandbox" => thread_sandbox,
         "cwd" => Path.expand(workspace),
         "dynamicTools" => DynamicTool.tool_specs()
       }
+      |> maybe_put("sandbox", thread_sandbox)
+
+    send_message(port, %{
+      "method" => "thread/start",
+      "id" => @thread_start_id,
+      "params" => params
     })
 
     case await_response(port, @thread_start_id) do
@@ -257,10 +262,8 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
-    send_message(port, %{
-      "method" => "turn/start",
-      "id" => @turn_start_id,
-      "params" => %{
+    params =
+      %{
         "threadId" => thread_id,
         "input" => [
           %{
@@ -270,9 +273,14 @@ defmodule SymphonyElixir.Codex.AppServer do
         ],
         "cwd" => Path.expand(workspace),
         "title" => "#{issue.identifier}: #{issue.title}",
-        "approvalPolicy" => approval_policy,
-        "sandboxPolicy" => turn_sandbox_policy
+        "approvalPolicy" => approval_policy
       }
+      |> maybe_put("sandboxPolicy", turn_sandbox_policy)
+
+    send_message(port, %{
+      "method" => "turn/start",
+      "id" => @turn_start_id,
+      "params" => params
     })
 
     case await_response(port, @turn_start_id) do
@@ -280,6 +288,9 @@ defmodule SymphonyElixir.Codex.AppServer do
       other -> other
     end
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
     receive_loop(port, on_message, Config.codex_turn_timeout_ms(), "", tool_executor, auto_approve_requests)

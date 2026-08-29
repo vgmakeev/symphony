@@ -689,11 +689,29 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
              "writableRoots" => [Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
              "networkAccess" => false,
              "excludeTmpdirEnvVar" => false,
              "excludeSlashTmp" => false
            }
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_permission_profile: "economic-os-job"
+    )
+
+    assert Config.codex_runtime_settings("/tmp/job") ==
+             {:ok,
+              %{
+                approval_policy: %{
+                  "granular" => %{
+                    "sandbox_approval" => true,
+                    "rules" => true,
+                    "mcp_elicitations" => true
+                  }
+                },
+                permission_profile: "economic-os-job",
+                thread_sandbox: nil,
+                turn_sandbox_policy: nil
+              }}
 
     assert Config.codex_turn_timeout_ms() == 3_600_000
     assert Config.codex_read_timeout_ms() == 5_000
@@ -784,7 +802,6 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
              "writableRoots" => [Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
              "networkAccess" => false,
              "excludeTmpdirEnvVar" => false,
              "excludeSlashTmp" => false
