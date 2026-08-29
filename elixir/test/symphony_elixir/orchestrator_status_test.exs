@@ -73,6 +73,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        %{
          event: :session_started,
          session_id: "thread-live-turn-live",
+         thread_id: "thread-live",
          timestamp: now
        }}
     )
@@ -91,6 +92,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.issue_id == issue_id
     assert snapshot_entry.session_id == "thread-live-turn-live"
+    assert snapshot_entry.thread_id == "thread-live"
     assert snapshot_entry.turn_count == 1
     assert snapshot_entry.last_codex_timestamp == now
 
@@ -99,6 +101,123 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              message: %{method: "some-event"},
              timestamp: now
            }
+  end
+
+  test "terminal worker observation is sent once with absolute usage totals" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "worker-token",
+      tracker_tenant: "surf"
+    )
+
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn options ->
+      send(parent, {:economic_os_request, options})
+      {:ok, %{status: 200, body: %{}}}
+    end)
+
+    issue_id = "7"
+    ref = make_ref()
+    started_at = DateTime.add(DateTime.utc_now(), -2, :second)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "EOS-AGENDA-7",
+      issue: %Issue{id: issue_id, identifier: "EOS-AGENDA-7", state: "In Progress"},
+      run_key: "run-terminal-observation",
+      run_attempt: 2,
+      retry_attempt: 1,
+      session_id: "thread-7-turn-2",
+      thread_id: "thread-7",
+      codex_input_tokens: 120,
+      codex_output_tokens: 30,
+      codex_total_tokens: 150,
+      codex_usage_observed: true,
+      turn_count: 2,
+      started_at: started_at
+    }
+
+    state = %Orchestrator.State{
+      running: %{issue_id => running_entry},
+      claimed: MapSet.new([issue_id]),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    assert {:noreply, _state} =
+             Orchestrator.handle_info({:DOWN, ref, :process, self(), :normal}, state)
+
+    assert_receive {:economic_os_request, options}
+    assert options[:url] =~ "/api/internal/economic-os/agent-runs:finish"
+    assert options[:json].run_key == "run-terminal-observation"
+    assert options[:json].attempt == 2
+    assert options[:json].status == "succeeded"
+    assert options[:json].thread_id == "thread-7"
+    assert options[:json].session_id == "thread-7-turn-2"
+    assert options[:json].input_tokens == 120
+    assert options[:json].output_tokens == 30
+    assert options[:json].total_tokens == 150
+    assert options[:json].turn_count == 2
+    refute Map.has_key?(options[:json], :prompt)
+    refute Map.has_key?(options[:json], :stdout)
+  end
+
+  test "startup failure keeps unknown session and token usage null" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "worker-token"
+    )
+
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn options ->
+      send(parent, {:economic_os_request, options})
+      {:ok, %{status: 200, body: %{}}}
+    end)
+
+    issue_id = "8"
+    ref = make_ref()
+    started_at = DateTime.add(DateTime.utc_now(), -1, :second)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "EOS-AGENDA-8",
+      issue: %Issue{id: issue_id, identifier: "EOS-AGENDA-8", state: "In Progress"},
+      run_key: "run-startup-failure",
+      run_attempt: 1,
+      session_id: nil,
+      thread_id: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_usage_observed: false,
+      turn_count: 0,
+      started_at: started_at
+    }
+
+    state = %Orchestrator.State{
+      running: %{issue_id => running_entry},
+      claimed: MapSet.new([issue_id]),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    assert {:noreply, _state} =
+             Orchestrator.handle_info({:DOWN, ref, :process, self(), :startup_failed}, state)
+
+    assert_receive {:economic_os_request, options}
+    assert options[:json].status == "failed"
+    assert options[:json].thread_id == nil
+    assert options[:json].session_id == nil
+    assert options[:json].input_tokens == nil
+    assert options[:json].output_tokens == nil
+    assert options[:json].total_tokens == nil
+    assert options[:json].turn_count == 0
   end
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do

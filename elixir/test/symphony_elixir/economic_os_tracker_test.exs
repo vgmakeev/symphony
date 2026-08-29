@@ -145,6 +145,71 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert options[:json] == %{response: "One concrete gap", response_data: response_data}
   end
 
+  test "records an idempotent agent run start through the bounded internal contract" do
+    parent = self()
+    stub_request(parent)
+    started_at = ~U[2026-08-29 10:00:00Z]
+
+    assert :ok =
+             EconomicOS.record_agent_run_start("7", %{
+               run_key: "run-0123456789abcdef",
+               attempt: 1,
+               started_at: started_at
+             })
+
+    assert_receive {:request, options}
+    assert options[:method] == :post
+    assert options[:url] =~ "/api/internal/economic-os/agent-runs:start"
+
+    assert options[:json] == %{
+             run_key: "run-0123456789abcdef",
+             agenda_id: 7,
+             attempt: 1,
+             started_at: "2026-08-29T10:00:00Z"
+           }
+
+    assert {"idempotency-key", "symphony:agent-run:run-0123456789abcdef:start"} in options[:headers]
+  end
+
+  test "records terminal telemetry without forwarding private log payloads" do
+    parent = self()
+    stub_request(parent)
+
+    assert :ok =
+             EconomicOS.record_agent_run_finish("7", %{
+               run_key: "run-0123456789abcdef",
+               attempt: 1,
+               started_at: ~U[2026-08-29 10:00:00Z],
+               finished_at: ~U[2026-08-29 10:00:12Z],
+               duration_ms: 12_000,
+               status: "succeeded",
+               thread_id: "thread-1",
+               session_id: "thread-1-turn-2",
+               input_tokens: nil,
+               output_tokens: nil,
+               total_tokens: nil,
+               turn_count: 2,
+               outcome: "completed",
+               summary: "Agent task completed",
+               diagnostic: nil,
+               evidence_refs: %{symphony_issue_identifier: "EOS-AGENDA-7"},
+               prompt: "must not cross the boundary",
+               stdout: "must not cross the boundary",
+               provider_payload: %{secret: true}
+             })
+
+    assert_receive {:request, options}
+    assert options[:url] =~ "/api/internal/economic-os/agent-runs:finish"
+    refute Map.has_key?(options[:json], :prompt)
+    refute Map.has_key?(options[:json], :stdout)
+    refute Map.has_key?(options[:json], :provider_payload)
+    assert options[:json].agenda_id == 7
+    assert options[:json].input_tokens == nil
+    assert options[:json].turn_count == 2
+
+    assert {"idempotency-key", "symphony:agent-run:run-0123456789abcdef:finish"} in options[:headers]
+  end
+
   test "validates the dedicated Economic OS token" do
     assert Config.validate!() == :ok
 

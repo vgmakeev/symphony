@@ -14,6 +14,8 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   alias SymphonyElixir.Linear.Issue
 
   @resource_path "/api/admin/revenue_management_agendas"
+  @run_start_path "/api/internal/economic-os/agent-runs:start"
+  @run_finish_path "/api/internal/economic-os/agent-runs:finish"
   @active_statuses ~w(open in_progress)
   @page_limit 200
   @max_agendas 1_000
@@ -74,6 +76,70 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
       _ ->
         {:error, :invalid_analysis_outcome}
+    end
+  end
+
+  @spec record_agent_run_start(String.t(), map()) :: :ok | {:error, term()}
+  def record_agent_run_start(issue_id, attributes)
+      when is_binary(issue_id) and is_map(attributes) do
+    with {:ok, agenda_id} <- agenda_id(issue_id),
+         {:ok, run_key} <- required_binary(attributes, :run_key),
+         {:ok, started_at} <- required_datetime(attributes, :started_at),
+         {:ok, attempt} <- required_positive_integer(attributes, :attempt) do
+      request_path(
+        :post,
+        @run_start_path,
+        %{
+          run_key: run_key,
+          agenda_id: agenda_id,
+          attempt: attempt,
+          started_at: DateTime.to_iso8601(started_at)
+        },
+        idempotency_key: "symphony:agent-run:#{run_key}:start"
+      )
+    end
+  end
+
+  @spec record_agent_run_finish(String.t(), map()) :: :ok | {:error, term()}
+  def record_agent_run_finish(issue_id, attributes)
+      when is_binary(issue_id) and is_map(attributes) do
+    with {:ok, agenda_id} <- agenda_id(issue_id),
+         {:ok, run_key} <- required_binary(attributes, :run_key),
+         {:ok, started_at} <- required_datetime(attributes, :started_at),
+         {:ok, finished_at} <- required_datetime(attributes, :finished_at),
+         {:ok, attempt} <- required_positive_integer(attributes, :attempt),
+         {:ok, duration_ms} <- required_non_negative_integer(attributes, :duration_ms),
+         {:ok, status} <- terminal_status(attributes[:status]) do
+      payload =
+        attributes
+        |> Map.take([
+          :thread_id,
+          :session_id,
+          :input_tokens,
+          :output_tokens,
+          :total_tokens,
+          :turn_count,
+          :outcome,
+          :summary,
+          :diagnostic,
+          :evidence_refs
+        ])
+        |> Map.merge(%{
+          run_key: run_key,
+          agenda_id: agenda_id,
+          attempt: attempt,
+          started_at: DateTime.to_iso8601(started_at),
+          finished_at: DateTime.to_iso8601(finished_at),
+          duration_ms: duration_ms,
+          status: status
+        })
+
+      request_path(
+        :post,
+        @run_finish_path,
+        payload,
+        idempotency_key: "symphony:agent-run:#{run_key}:finish"
+      )
     end
   end
 
@@ -200,9 +266,13 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   end
 
   defp request(method, suffix, body, opts \\ []) do
+    request_path(method, @resource_path <> suffix, body, opts)
+  end
+
+  defp request_path(method, path, body, opts) do
     request_options = [
       method: method,
-      url: endpoint() <> @resource_path <> suffix,
+      url: endpoint() <> path,
       headers: headers(Keyword.get(opts, :idempotency_key)),
       params: Keyword.get(opts, :params, [])
     ]
@@ -251,6 +321,46 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   end
 
   defp normalize_state(value), do: value |> to_string() |> String.trim() |> String.downcase()
+
+  defp agenda_id(issue_id) do
+    case Integer.parse(issue_id) do
+      {value, ""} when value > 0 -> {:ok, value}
+      _ -> {:error, :invalid_economic_os_agenda_id}
+    end
+  end
+
+  defp required_binary(attributes, key) do
+    case Map.get(attributes, key) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _ -> {:error, {:invalid_agent_run_field, key}}
+    end
+  end
+
+  defp required_datetime(attributes, key) do
+    case Map.get(attributes, key) do
+      %DateTime{} = value -> {:ok, value}
+      _ -> {:error, {:invalid_agent_run_field, key}}
+    end
+  end
+
+  defp required_positive_integer(attributes, key) do
+    case Map.get(attributes, key) do
+      value when is_integer(value) and value > 0 -> {:ok, value}
+      _ -> {:error, {:invalid_agent_run_field, key}}
+    end
+  end
+
+  defp required_non_negative_integer(attributes, key) do
+    case Map.get(attributes, key) do
+      value when is_integer(value) and value >= 0 -> {:ok, value}
+      _ -> {:error, {:invalid_agent_run_field, key}}
+    end
+  end
+
+  defp terminal_status(value) when value in ["succeeded", "failed", "cancelled"],
+    do: {:ok, value}
+
+  defp terminal_status(_value), do: {:error, {:invalid_agent_run_field, :status}}
 
   defp submission_idempotency_key(issue_id, values, outcome) do
     digest =

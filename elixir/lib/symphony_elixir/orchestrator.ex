@@ -9,6 +9,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Tracker.EconomicOS
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -100,6 +101,14 @@ defmodule SymphonyElixir.Orchestrator do
         {running_entry, state} = pop_running_entry(state, issue_id)
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
+        finished_at = DateTime.utc_now()
+
+        maybe_record_economic_os_run_finish(
+          issue_id,
+          running_entry,
+          {:down, reason},
+          finished_at
+        )
 
         state =
           case reason do
@@ -332,13 +341,25 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
+  defp terminate_running_issue(
+         %State{} = state,
+         issue_id,
+         cleanup_workspace,
+         termination_kind \\ :cancelled
+       ) do
     case Map.get(state.running, issue_id) do
       nil ->
         release_issue_claim(state, issue_id)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
+
+        maybe_record_economic_os_run_finish(
+          issue_id,
+          running_entry,
+          termination_kind,
+          DateTime.utc_now()
+        )
 
         if cleanup_workspace do
           cleanup_issue_workspace(identifier)
@@ -395,7 +416,7 @@ defmodule SymphonyElixir.Orchestrator do
       next_attempt = next_retry_attempt_from_running(running_entry)
 
       state
-      |> terminate_running_issue(issue_id, false)
+      |> terminate_running_issue(issue_id, false, :stalled)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
         error: "stalled for #{elapsed_ms}ms without codex activity"
@@ -603,6 +624,9 @@ defmodule SymphonyElixir.Orchestrator do
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+        started_at = DateTime.utc_now()
+        run_key = new_agent_run_key()
+        run_attempt = agent_run_attempt(attempt)
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)}")
 
@@ -612,7 +636,10 @@ defmodule SymphonyElixir.Orchestrator do
             ref: ref,
             identifier: issue.identifier,
             issue: issue,
+            run_key: run_key,
+            run_attempt: run_attempt,
             session_id: nil,
+            thread_id: nil,
             last_codex_message: nil,
             last_codex_timestamp: nil,
             last_codex_event: nil,
@@ -620,13 +647,16 @@ defmodule SymphonyElixir.Orchestrator do
             codex_input_tokens: 0,
             codex_output_tokens: 0,
             codex_total_tokens: 0,
+            codex_usage_observed: false,
             codex_last_reported_input_tokens: 0,
             codex_last_reported_output_tokens: 0,
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
-            started_at: DateTime.utc_now()
+            started_at: started_at
           })
+
+        maybe_record_economic_os_run_start(issue, run_key, run_attempt, started_at)
 
         %{
           state
@@ -834,6 +864,100 @@ defmodule SymphonyElixir.Orchestrator do
   defp normalize_retry_attempt(attempt) when is_integer(attempt) and attempt > 0, do: attempt
   defp normalize_retry_attempt(_attempt), do: 0
 
+  defp agent_run_attempt(attempt), do: normalize_retry_attempt(attempt) + 1
+
+  defp new_agent_run_key do
+    "run-" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
+  end
+
+  defp maybe_record_economic_os_run_start(%Issue{} = issue, run_key, attempt, started_at) do
+    if Config.tracker_kind() == "economic_os" do
+      case EconomicOS.record_agent_run_start(issue.id, %{
+             run_key: run_key,
+             attempt: attempt,
+             started_at: started_at
+           }) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Unable to record Economic OS agent run start for #{issue_context(issue)}: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp maybe_record_economic_os_run_finish(
+         issue_id,
+         %{run_key: run_key, started_at: %DateTime{} = started_at} = running_entry,
+         termination,
+         %DateTime{} = finished_at
+       )
+       when is_binary(run_key) do
+    if Config.tracker_kind() == "economic_os" do
+      {status, outcome, summary, diagnostic} = terminal_run_observation(termination)
+      usage = terminal_usage(running_entry)
+
+      attributes =
+        Map.merge(usage, %{
+          run_key: run_key,
+          attempt: Map.get(running_entry, :run_attempt, 1),
+          started_at: started_at,
+          finished_at: finished_at,
+          duration_ms: max(0, DateTime.diff(finished_at, started_at, :millisecond)),
+          status: status,
+          thread_id: Map.get(running_entry, :thread_id),
+          session_id: Map.get(running_entry, :session_id),
+          turn_count: Map.get(running_entry, :turn_count, 0),
+          outcome: outcome,
+          summary: summary,
+          diagnostic: diagnostic,
+          evidence_refs: %{
+            symphony_issue_identifier: Map.get(running_entry, :identifier, issue_id)
+          }
+        })
+
+      case EconomicOS.record_agent_run_finish(issue_id, attributes) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Unable to record Economic OS agent run finish for issue_id=#{issue_id} run_key=#{run_key}: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp maybe_record_economic_os_run_finish(
+         _issue_id,
+         _running_entry,
+         _termination,
+         _finished_at
+       ),
+       do: :ok
+
+  defp terminal_run_observation({:down, :normal}),
+    do: {"succeeded", "completed", "Agent task completed", nil}
+
+  defp terminal_run_observation(:cancelled),
+    do: {"cancelled", "cancelled", "Agent task cancelled by orchestration", nil}
+
+  defp terminal_run_observation(:stalled),
+    do: {"failed", "failed", "Agent task stalled", "codex activity timeout"}
+
+  defp terminal_run_observation({:down, _reason}),
+    do: {"failed", "failed", "Agent task exited abnormally", "agent process failure"}
+
+  defp terminal_usage(%{codex_usage_observed: true} = running_entry) do
+    %{
+      input_tokens: Map.get(running_entry, :codex_input_tokens, 0),
+      output_tokens: Map.get(running_entry, :codex_output_tokens, 0),
+      total_tokens: Map.get(running_entry, :codex_total_tokens, 0)
+    }
+  end
+
+  defp terminal_usage(_running_entry) do
+    %{input_tokens: nil, output_tokens: nil, total_tokens: nil}
+  end
+
   defp next_retry_attempt_from_running(running_entry) do
     case Map.get(running_entry, :retry_attempt) do
       attempt when is_integer(attempt) and attempt > 0 -> attempt + 1
@@ -927,10 +1051,12 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: metadata.identifier,
           state: metadata.issue.state,
           session_id: metadata.session_id,
+          thread_id: Map.get(metadata, :thread_id),
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
           codex_output_tokens: metadata.codex_output_tokens,
           codex_total_tokens: metadata.codex_total_tokens,
+          codex_usage_observed: Map.get(metadata, :codex_usage_observed, false),
           turn_count: Map.get(metadata, :turn_count, 0),
           started_at: metadata.started_at,
           last_codex_timestamp: metadata.last_codex_timestamp,
@@ -994,17 +1120,20 @@ defmodule SymphonyElixir.Orchestrator do
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
+    usage_observed = Map.get(running_entry, :codex_usage_observed, false)
 
     {
       Map.merge(running_entry, %{
         last_codex_timestamp: timestamp,
         last_codex_message: summarize_codex_update(update),
         session_id: session_id_for_update(running_entry.session_id, update),
+        thread_id: thread_id_for_update(Map.get(running_entry, :thread_id), update),
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
         codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
+        codex_usage_observed: usage_observed or token_delta.usage_observed,
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
@@ -1031,6 +1160,11 @@ defmodule SymphonyElixir.Orchestrator do
     do: session_id
 
   defp session_id_for_update(existing, _update), do: existing
+
+  defp thread_id_for_update(_existing, %{thread_id: thread_id}) when is_binary(thread_id),
+    do: thread_id
+
+  defp thread_id_for_update(existing, _update), do: existing
 
   defp turn_count_for_update(existing_count, existing_session_id, %{
          event: :session_started,
@@ -1182,6 +1316,7 @@ defmodule SymphonyElixir.Orchestrator do
         input_tokens: input.delta,
         output_tokens: output.delta,
         total_tokens: total.delta,
+        usage_observed: map_size(usage) > 0,
         input_reported: input.reported,
         output_reported: output.reported,
         total_reported: total.reported
