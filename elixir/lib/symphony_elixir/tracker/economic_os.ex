@@ -59,23 +59,26 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
   @spec submit_analysis(String.t(), String.t(), map(), String.t()) :: :ok | {:error, term()}
   def submit_analysis(issue_id, response, response_data, outcome)
       when is_binary(issue_id) and is_binary(response) and is_map(response_data) do
+    response_data = canonicalize_manager_review(response_data)
     values = %{response: response, response_data: response_data}
     idempotency_key = submission_idempotency_key(issue_id, values, outcome)
 
-    case outcome do
-      "answered" ->
-        request(
-          :post,
-          "/#{issue_id}:transition",
-          %{transition: "answer", context: %{}, values: values},
-          idempotency_key: idempotency_key
-        )
+    with :ok <- validate_manager_review_binding(response_data) do
+      case outcome do
+        "answered" ->
+          request(
+            :post,
+            "/#{issue_id}:transition",
+            %{transition: "answer", context: %{}, values: values},
+            idempotency_key: idempotency_key
+          )
 
-      "needs_revision" ->
-        request(:patch, "/#{issue_id}", values, idempotency_key: idempotency_key)
+        "needs_revision" ->
+          request(:patch, "/#{issue_id}", values, idempotency_key: idempotency_key)
 
-      _ ->
-        {:error, :invalid_analysis_outcome}
+        _ ->
+          {:error, :invalid_analysis_outcome}
+      end
     end
   end
 
@@ -195,7 +198,7 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
       title: field(agenda, "title"),
       description: agenda_description(agenda),
       priority: priority(agenda),
-      state: issue_state(field(agenda, "status")),
+      state: issue_state(agenda),
       branch_name: "symphony/agenda-#{id}",
       url: endpoint() <> @resource_path <> "/#{id}",
       labels: agenda_labels(agenda),
@@ -222,10 +225,17 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
     )
   end
 
-  defp issue_state("open"), do: "Todo"
-  defp issue_state("in_progress"), do: "In Progress"
-  defp issue_state("waived"), do: "Cancelled"
-  defp issue_state(_), do: "Done"
+  defp issue_state(agenda) do
+    status = field(agenda, "status")
+
+    cond do
+      status in @active_statuses and not candidate?(agenda) -> "Done"
+      status == "open" -> "Todo"
+      status == "in_progress" -> "In Progress"
+      status == "waived" -> "Cancelled"
+      true -> "Done"
+    end
+  end
 
   defp candidate?(agenda) do
     field(agenda, "status") in @active_statuses and
@@ -255,7 +265,7 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
 
   defp completion_instruction(agenda) do
     if field(agenda, "execution_mode") == "human_review" do
-      "Critically review the new raw manager input against cited evidence, prior context and every material response contract. Structure only facts and commitments the human actually supplied; do not invent or silently rewrite them. Submit answered only with accepted quality evidence and _manager_review bound to the current input digest. Otherwise leave needs_revision open with _manager_review.status=needs_revision and exactly one highest-leverage collegial follow_up_question."
+      "Critically review the new raw manager input against cited evidence, prior context and every material response contract. Structure only facts and commitments the human actually supplied; do not invent or silently rewrite them. Set _manager_review.input_digest exactly equal to _manager_input.digest. Submit answered only with accepted quality evidence. Otherwise leave needs_revision open with _manager_review.status=needs_revision and exactly one highest-leverage collegial follow_up_question."
     else
       "Submit the cited response and structured response_data once through economic_os_submit_analysis with outcome=answered."
     end
@@ -318,6 +328,51 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
       Enum.find_value(map, fn {candidate, value} ->
         if to_string(candidate) == key, do: value
       end)
+  end
+
+  defp canonicalize_manager_review(response_data) do
+    manager_review = field(response_data, "_manager_review")
+
+    if is_map(manager_review) do
+      canonical_digest =
+        field(manager_review, "input_digest") || field(manager_review, "manager_input_digest")
+
+      canonical_review =
+        manager_review
+        |> Map.delete("manager_input_digest")
+        |> Map.delete(:manager_input_digest)
+        |> Map.delete(:input_digest)
+        |> maybe_put_input_digest(canonical_digest)
+
+      response_data
+      |> Map.delete(:_manager_review)
+      |> Map.put("_manager_review", canonical_review)
+    else
+      response_data
+    end
+  end
+
+  defp maybe_put_input_digest(manager_review, nil), do: manager_review
+
+  defp maybe_put_input_digest(manager_review, digest),
+    do: Map.put(manager_review, "input_digest", digest)
+
+  defp validate_manager_review_binding(response_data) do
+    manager_input = field(response_data, "_manager_input")
+
+    if is_map(manager_input) do
+      input_digest = field(manager_input, "digest")
+      manager_review = field(response_data, "_manager_review") || %{}
+
+      if is_binary(input_digest) and input_digest != "" and
+           field(manager_review, "input_digest") != input_digest do
+        {:error, {:invalid_manager_input_review, input_digest}}
+      else
+        :ok
+      end
+    else
+      :ok
+    end
   end
 
   defp normalize_state(value), do: value |> to_string() |> String.trim() |> String.downcase()

@@ -56,6 +56,13 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert [%{state: "Cancelled"}] = selected
   end
 
+  test "reports reviewed human input as terminal to the orchestrator" do
+    stub_agendas([human_input_agenda(5, "reviewed-input", "reviewed-input")])
+
+    assert {:ok, selected} = EconomicOS.fetch_issue_states_by_ids(["5"])
+    assert [%{state: "Done"}] = selected
+  end
+
   test "paginates agendas within the Economic OS page limit" do
     parent = self()
 
@@ -143,6 +150,55 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert options[:method] == :patch
     assert options[:url] =~ "/revenue_management_agendas/8"
     assert options[:json] == %{response: "One concrete gap", response_data: response_data}
+  end
+
+  test "canonicalizes the reviewed manager input digest before submission" do
+    parent = self()
+    stub_request(parent)
+
+    response_data = %{
+      "_manager_input" => %{"digest" => "current-input"},
+      "_manager_review" => %{
+        "status" => "needs_revision",
+        "manager_input_digest" => "current-input"
+      }
+    }
+
+    assert :ok =
+             EconomicOS.submit_analysis(
+               "8",
+               "One concrete gap",
+               response_data,
+               "needs_revision"
+             )
+
+    assert_receive {:request, options}
+    review = options[:json].response_data["_manager_review"]
+    assert review["input_digest"] == "current-input"
+    refute Map.has_key?(review, "manager_input_digest")
+  end
+
+  test "rejects a manager review bound to a stale input" do
+    parent = self()
+    stub_request(parent)
+
+    response_data = %{
+      "_manager_input" => %{"digest" => "current-input"},
+      "_manager_review" => %{
+        "status" => "needs_revision",
+        "input_digest" => "old-input"
+      }
+    }
+
+    assert {:error, {:invalid_manager_input_review, "current-input"}} =
+             EconomicOS.submit_analysis(
+               "8",
+               "One concrete gap",
+               response_data,
+               "needs_revision"
+             )
+
+    refute_receive {:request, _options}
   end
 
   test "records an idempotent agent run start through the bounded internal contract" do

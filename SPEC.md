@@ -1113,6 +1113,9 @@ Optional client-side tool extension:
 - `answered` submits values through the Economic OS `answer` transition so its
   validation and state change are atomic. `needs_revision` records the review
   without closing the agenda.
+- When manager input is present, `_manager_review.input_digest` must equal the
+  current `_manager_input.digest`. A supported legacy alias may be canonicalized
+  before submission; stale or missing bindings are rejected.
 - Repeated identical submissions use a deterministic idempotency key.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
@@ -1246,6 +1249,10 @@ Symphony does not require general-purpose tracker write APIs in the orchestrator
 - For `economic_os`, the single agenda-bound `economic_os_submit_analysis`
   extension is the allowed write boundary. Economic OS remains responsible for
   validation, idempotency and state transitions.
+- The Economic OS adapter may project an active business agenda as tracker
+  `Done` after its current candidate input has been processed. This is an
+  executor-local stop signal only: it does not close or mutate the agenda in
+  Economic OS while it waits for human revision or new evidence.
 
 ## 12. Prompt Construction and Context Assembly
 
