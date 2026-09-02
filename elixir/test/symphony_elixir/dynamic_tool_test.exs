@@ -77,6 +77,29 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert response["success"] == false
   end
 
+  test "Economic OS submission exposes API validation details" do
+    response =
+      DynamicTool.execute(
+        "economic_os_submit_analysis",
+        %{"response" => "Cited result", "response_data" => %{}, "outcome" => "answered"},
+        issue: %{id: "42"},
+        economic_os_submitter: fn _issue_id, _text, _data, _outcome ->
+          {:error, {:economic_os_api_status, 422, %{"detail" => "Management agenda response is incomplete"}}}
+        end
+      )
+
+    assert response["success"] == false
+    [content] = response["contentItems"]
+
+    assert Jason.decode!(content["text"]) == %{
+             "error" => %{
+               "message" => "Economic OS analysis submission failed with HTTP 422.",
+               "status" => 422,
+               "details" => %{"detail" => "Management agenda response is incomplete"}
+             }
+           }
+  end
+
   test "unsupported tools return a failure payload with the supported tool list" do
     response = DynamicTool.execute("not_a_real_tool", %{})
 

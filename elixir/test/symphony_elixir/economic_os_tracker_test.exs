@@ -152,6 +152,19 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
     assert options[:json] == %{response: "One concrete gap", response_data: response_data}
   end
 
+  test "retains Economic OS error details for a rejected analysis" do
+    response_body = %{
+      "detail" => "Management agenda response is incomplete: portfolio: response is required"
+    }
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:ok, %{status: 422, body: response_body}}
+    end)
+
+    assert {:error, {:economic_os_api_status, 422, ^response_body}} =
+             EconomicOS.submit_analysis("7", "Cited result", %{}, "answered")
+  end
+
   test "canonicalizes the reviewed manager input digest before submission" do
     parent = self()
     stub_request(parent)

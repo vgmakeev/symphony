@@ -288,6 +288,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   end
 
+  defp economic_os_tool_error_payload({:economic_os_api_status, status, response_body}) do
+    %{
+      "error" => %{
+        "message" => "Economic OS analysis submission failed with HTTP #{status}.",
+        "status" => status,
+        "details" => response_body
+      }
+    }
+  end
+
   defp economic_os_tool_error_payload(reason) do
     %{
       "error" => %{

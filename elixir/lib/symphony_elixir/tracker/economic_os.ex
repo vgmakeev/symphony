@@ -296,6 +296,9 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
       {:ok, %{status: status, body: response_body}} when status in 200..299 ->
         if method == :get, do: {:ok, response_body}, else: :ok
 
+      {:ok, %{status: status, body: response_body}} ->
+        {:error, {:economic_os_api_status, status, response_body}}
+
       {:ok, %{status: status}} ->
         {:error, {:economic_os_api_status, status}}
 
