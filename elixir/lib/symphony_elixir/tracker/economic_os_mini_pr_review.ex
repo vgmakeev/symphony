@@ -39,21 +39,12 @@ defmodule SymphonyElixir.Tracker.EconomicOSMiniPRReview do
   def fetch_issue_states_by_ids(issue_ids) do
     issue_ids
     |> Enum.reduce_while({:ok, []}, fn issue_id, {:ok, issues} ->
-      case review_id(issue_id) do
-        {:ok, id} ->
-          case request(:post, @get_path, %{review_id: id}) do
-            {:ok, body} ->
-              case response_review(body) do
-                review when is_map(review) -> {:cont, {:ok, [to_issue(review) | issues]}}
-                _ -> {:cont, {:ok, issues}}
-              end
+      case fetch_issue_state(issue_id) do
+        {:ok, nil} ->
+          {:cont, {:ok, issues}}
 
-            {:error, {:economic_os_api_status, 404, _body}} ->
-              {:cont, {:ok, issues}}
-
-            {:error, reason} ->
-              {:halt, {:error, reason}}
-          end
+        {:ok, issue} ->
+          {:cont, {:ok, [issue | issues]}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
@@ -84,7 +75,12 @@ defmodule SymphonyElixir.Tracker.EconomicOSMiniPRReview do
   def submit_review(issue_id, result) when is_binary(issue_id) and is_map(result) do
     with {:ok, id} <- review_id(issue_id),
          {:ok, _body} <-
-           request(:post, @submit_path, %{review_id: id, result: result}, idempotency_key: submission_idempotency_key(issue_id, result)) do
+           request(
+             :post,
+             @submit_path,
+             %{review_id: id, result: result},
+             idempotency_key: submission_idempotency_key(issue_id, result)
+           ) do
       :ok
     end
   end
@@ -210,6 +206,19 @@ defmodule SymphonyElixir.Tracker.EconomicOSMiniPRReview do
     |> case do
       nil -> field(body, "review")
       data -> field(data, "review")
+    end
+  end
+
+  defp fetch_issue_state(issue_id) do
+    with {:ok, id} <- review_id(issue_id),
+         {:ok, body} <- request(:post, @get_path, %{review_id: id}) do
+      case response_review(body) do
+        review when is_map(review) -> {:ok, to_issue(review)}
+        _ -> {:ok, nil}
+      end
+    else
+      {:error, {:economic_os_api_status, 404, _body}} -> {:ok, nil}
+      {:error, reason} -> {:error, reason}
     end
   end
 

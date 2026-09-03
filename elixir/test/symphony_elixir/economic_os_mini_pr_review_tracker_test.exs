@@ -102,6 +102,111 @@ defmodule SymphonyElixir.EconomicOSMiniPRReviewTrackerTest do
     assert Config.validate!() == {:error, :missing_economic_os_api_token}
   end
 
+  test "filters candidates by normalized state and handles an empty projection" do
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:ok, %{status: 200, body: %{"data" => %{"review" => review()}}}}
+    end)
+
+    assert {:ok, [_issue]} = EconomicOSMiniPRReview.fetch_issues_by_states([" TODO "])
+    assert {:ok, []} = EconomicOSMiniPRReview.fetch_issues_by_states(["Done"])
+    assert :ok = EconomicOSMiniPRReview.create_comment("7", "ignored")
+    assert :ok = EconomicOSMiniPRReview.update_issue_state("7", "Done")
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:ok, %{status: 200, body: nil}}
+    end)
+
+    assert {:ok, []} = EconomicOSMiniPRReview.fetch_candidate_issues()
+  end
+
+  test "normalizes atom-keyed reviews and omits a tenant header when unset" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os_mini_pr_review",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "reviewer-token",
+      tracker_tenant: nil
+    )
+
+    parent = self()
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn options ->
+      send(parent, {:request, options})
+      {:ok, %{status: 200, body: %{data: %{review: Map.new(review(), fn {key, value} -> {String.to_atom(key), value} end)}}}}
+    end)
+
+    assert {:ok, [%{id: "7"}]} = EconomicOSMiniPRReview.fetch_candidate_issues()
+    assert_receive {:request, request}
+    refute Enum.any?(request[:headers], fn {name, _value} -> name == "x-mini-tenant" end)
+
+    assert %{id: "7"} =
+             EconomicOSMiniPRReview.normalize_review_for_test(%{
+               id: 7,
+               title: "Minimal review"
+             })
+  end
+
+  test "treats missing and deleted review states as absent" do
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn options ->
+      case options[:json].review_id do
+        7 -> {:ok, %{status: 200, body: %{"data" => %{"review" => nil}}}}
+        8 -> {:ok, %{status: 404, body: %{"error" => "not found"}}}
+      end
+    end)
+
+    assert {:ok, []} = EconomicOSMiniPRReview.fetch_issue_states_by_ids(["7", "8"])
+  end
+
+  test "returns bounded provider and validation failures" do
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:ok, %{status: 503, body: %{"error" => "unavailable"}}}
+    end)
+
+    assert {:error, {:economic_os_api_status, 503, %{"error" => "unavailable"}}} =
+             EconomicOSMiniPRReview.fetch_issue_states_by_ids(["7"])
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:ok, %{status: 503}}
+    end)
+
+    assert {:error, {:economic_os_api_status, 503}} =
+             EconomicOSMiniPRReview.fetch_candidate_issues()
+
+    Application.put_env(:symphony_elixir, :economic_os_request_fun, fn _options ->
+      {:error, :timeout}
+    end)
+
+    assert {:error, {:economic_os_api_request, :timeout}} =
+             EconomicOSMiniPRReview.fetch_candidate_issues()
+
+    assert {:error, :invalid_mini_pr_review_id} =
+             EconomicOSMiniPRReview.submit_review("invalid", review_result())
+
+    assert {:error, {:invalid_agent_run_field, :run_key}} =
+             EconomicOSMiniPRReview.record_agent_run_start("7", %{attempt: 1})
+
+    assert {:error, {:invalid_agent_run_field, :attempt}} =
+             EconomicOSMiniPRReview.record_agent_run_start("7", %{
+               run_key: "run-key",
+               attempt: 0
+             })
+
+    assert {:error, {:invalid_agent_run_field, :duration_ms}} =
+             EconomicOSMiniPRReview.record_agent_run_finish("7", %{
+               run_key: "run-key",
+               attempt: 1,
+               duration_ms: -1,
+               status: "failed"
+             })
+
+    assert {:error, {:invalid_agent_run_field, :status}} =
+             EconomicOSMiniPRReview.record_agent_run_finish("7", %{
+               run_key: "run-key",
+               attempt: 1,
+               duration_ms: 0,
+               status: "running"
+             })
+  end
+
   defp review(state \\ "Todo") do
     %{
       "id" => 7,

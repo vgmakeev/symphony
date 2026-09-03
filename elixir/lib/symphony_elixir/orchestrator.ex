@@ -876,10 +876,9 @@ defmodule SymphonyElixir.Orchestrator do
         :ok
 
       tracker ->
-        case apply(tracker, :record_agent_run_start, [
-               issue.id,
-               %{run_key: run_key, attempt: attempt, started_at: started_at}
-             ]) do
+        attributes = %{run_key: run_key, attempt: attempt, started_at: started_at}
+
+        case record_economic_os_run_start(tracker, issue.id, attributes) do
           :ok ->
             :ok
 
@@ -923,7 +922,7 @@ defmodule SymphonyElixir.Orchestrator do
             }
           })
 
-        case apply(tracker, :record_agent_run_finish, [issue_id, attributes]) do
+        case record_economic_os_run_finish(tracker, issue_id, attributes) do
           :ok ->
             :ok
 
@@ -948,6 +947,18 @@ defmodule SymphonyElixir.Orchestrator do
       _ -> nil
     end
   end
+
+  defp record_economic_os_run_start(EconomicOS, issue_id, attributes),
+    do: EconomicOS.record_agent_run_start(issue_id, attributes)
+
+  defp record_economic_os_run_start(EconomicOSMiniPRReview, issue_id, attributes),
+    do: EconomicOSMiniPRReview.record_agent_run_start(issue_id, attributes)
+
+  defp record_economic_os_run_finish(EconomicOS, issue_id, attributes),
+    do: EconomicOS.record_agent_run_finish(issue_id, attributes)
+
+  defp record_economic_os_run_finish(EconomicOSMiniPRReview, issue_id, attributes),
+    do: EconomicOSMiniPRReview.record_agent_run_finish(issue_id, attributes)
 
   defp terminal_run_observation({:down, :normal}),
     do: {"succeeded", "completed", "Agent task completed", nil}
