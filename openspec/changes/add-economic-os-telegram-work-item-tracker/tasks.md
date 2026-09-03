@@ -11,4 +11,4 @@
 ## 3. Verification and operations
 
 - [x] 3.1 Cover tracker selection, projection, exact endpoints, telemetry, tool availability and forbidden identity with tests.
-- [ ] 3.2 Run the full Symphony quality gate and a production canary against the Mini work-item endpoints.
+- [x] 3.2 Run the full Symphony quality gate and a production canary against the Mini work-item endpoints.
