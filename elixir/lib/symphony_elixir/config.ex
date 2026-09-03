@@ -427,6 +427,7 @@ defmodule SymphonyElixir.Config do
       "memory" -> :ok
       "markdown" -> :ok
       "economic_os" -> :ok
+      "economic_os_mini_pr_review" -> :ok
       nil -> {:error, :missing_tracker_kind}
       other -> {:error, {:unsupported_tracker_kind, other}}
     end
@@ -441,7 +442,7 @@ defmodule SymphonyElixir.Config do
           {:error, :missing_linear_api_token}
         end
 
-      "economic_os" ->
+      kind when kind in ["economic_os", "economic_os_mini_pr_review"] ->
         if is_binary(tracker_api_token()) do
           :ok
         else

@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
-  alias SymphonyElixir.Tracker.EconomicOS
+  alias SymphonyElixir.Tracker.{EconomicOS, EconomicOSMiniPRReview}
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -871,18 +871,21 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_record_economic_os_run_start(%Issue{} = issue, run_key, attempt, started_at) do
-    if Config.tracker_kind() == "economic_os" do
-      case EconomicOS.record_agent_run_start(issue.id, %{
-             run_key: run_key,
-             attempt: attempt,
-             started_at: started_at
-           }) do
-        :ok ->
-          :ok
+    case economic_os_run_tracker() do
+      nil ->
+        :ok
 
-        {:error, reason} ->
-          Logger.warning("Unable to record Economic OS agent run start for #{issue_context(issue)}: #{inspect(reason)}")
-      end
+      tracker ->
+        case apply(tracker, :record_agent_run_start, [
+               issue.id,
+               %{run_key: run_key, attempt: attempt, started_at: started_at}
+             ]) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Unable to record Economic OS agent run start for #{issue_context(issue)}: #{inspect(reason)}")
+        end
     end
   end
 
@@ -893,36 +896,40 @@ defmodule SymphonyElixir.Orchestrator do
          %DateTime{} = finished_at
        )
        when is_binary(run_key) do
-    if Config.tracker_kind() == "economic_os" do
-      {status, outcome, summary, diagnostic} = terminal_run_observation(termination)
-      usage = terminal_usage(running_entry)
+    case economic_os_run_tracker() do
+      nil ->
+        :ok
 
-      attributes =
-        Map.merge(usage, %{
-          run_key: run_key,
-          attempt: Map.get(running_entry, :run_attempt, 1),
-          started_at: started_at,
-          finished_at: finished_at,
-          duration_ms: max(0, DateTime.diff(finished_at, started_at, :millisecond)),
-          status: status,
-          thread_id: Map.get(running_entry, :thread_id),
-          session_id: Map.get(running_entry, :session_id),
-          turn_count: Map.get(running_entry, :turn_count, 0),
-          outcome: outcome,
-          summary: summary,
-          diagnostic: diagnostic,
-          evidence_refs: %{
-            symphony_issue_identifier: Map.get(running_entry, :identifier, issue_id)
-          }
-        })
+      tracker ->
+        {status, outcome, summary, diagnostic} = terminal_run_observation(termination)
+        usage = terminal_usage(running_entry)
 
-      case EconomicOS.record_agent_run_finish(issue_id, attributes) do
-        :ok ->
-          :ok
+        attributes =
+          Map.merge(usage, %{
+            run_key: run_key,
+            attempt: Map.get(running_entry, :run_attempt, 1),
+            started_at: started_at,
+            finished_at: finished_at,
+            duration_ms: max(0, DateTime.diff(finished_at, started_at, :millisecond)),
+            status: status,
+            thread_id: Map.get(running_entry, :thread_id),
+            session_id: Map.get(running_entry, :session_id),
+            turn_count: Map.get(running_entry, :turn_count, 0),
+            outcome: outcome,
+            summary: summary,
+            diagnostic: diagnostic,
+            evidence_refs: %{
+              symphony_issue_identifier: Map.get(running_entry, :identifier, issue_id)
+            }
+          })
 
-        {:error, reason} ->
-          Logger.warning("Unable to record Economic OS agent run finish for issue_id=#{issue_id} run_key=#{run_key}: #{inspect(reason)}")
-      end
+        case apply(tracker, :record_agent_run_finish, [issue_id, attributes]) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Unable to record Economic OS agent run finish for issue_id=#{issue_id} run_key=#{run_key}: #{inspect(reason)}")
+        end
     end
   end
 
@@ -933,6 +940,14 @@ defmodule SymphonyElixir.Orchestrator do
          _finished_at
        ),
        do: :ok
+
+  defp economic_os_run_tracker do
+    case Config.tracker_kind() do
+      "economic_os" -> EconomicOS
+      "economic_os_mini_pr_review" -> EconomicOSMiniPRReview
+      _ -> nil
+    end
+  end
 
   defp terminal_run_observation({:down, :normal}),
     do: {"succeeded", "completed", "Agent task completed", nil}

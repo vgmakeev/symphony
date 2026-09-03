@@ -561,7 +561,7 @@ Validation checks:
 This section is intentionally redundant so a coding agent can implement the config layer quickly.
 
 - `tracker.kind`: string, required; supported values are `linear`, `markdown`,
-  and `economic_os`
+  `economic_os`, and `economic_os_mini_pr_review`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
@@ -1063,8 +1063,8 @@ Unsupported dynamic tool calls:
 Optional client-side tool extension:
 
 - An implementation may expose a limited set of client-side tools to the app-server session.
-- Current optional standardized tools: `linear_graphql` and
-  `economic_os_submit_analysis`.
+- Current optional standardized tools: `linear_graphql`,
+  `economic_os_submit_analysis`, and `economic_os_submit_mini_pr_review`.
 - If implemented, supported tools should be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names should still return a failure result and continue the session.
@@ -1117,6 +1117,19 @@ Optional client-side tool extension:
   current `_manager_input.digest`. A supported legacy alias may be canonicalized
   before submission; stale or missing bindings are rejected.
 - Repeated identical submissions use a deterministic idempotency key.
+
+`economic_os_submit_mini_pr_review` extension contract:
+
+- Availability: only when `tracker.kind == "economic_os_mini_pr_review"`; neither
+  `linear_graphql` nor the management-agenda submission tool is advertised.
+- The model supplies the typed review result only. Symphony binds the current
+  review id from the tracker issue; repository, pull number, GitHub publication
+  and merge are not tool arguments or Symphony capabilities.
+- The result binds exact head SHA, policy revision/digest and manifest digest,
+  and contains verdict, summary, checked areas, reuse/placement assessments,
+  evidence, findings and completeness.
+- Economic OS revalidates the schema and immutable binding, performs the FSM
+  transition and owns idempotent GitHub publication/reconciliation.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
 
@@ -1249,6 +1262,9 @@ Symphony does not require general-purpose tracker write APIs in the orchestrator
 - For `economic_os`, the single agenda-bound `economic_os_submit_analysis`
   extension is the allowed write boundary. Economic OS remains responsible for
   validation, idempotency and state transitions.
+- For `economic_os_mini_pr_review`, the single review-bound
+  `economic_os_submit_mini_pr_review` extension is the allowed write boundary.
+  It has no GitHub credential and cannot select another review.
 - The Economic OS adapter may project an active business agenda as tracker
   `Done` after its current candidate input has been processed. This is an
   executor-local stop signal only: it does not close or mutate the agenda in

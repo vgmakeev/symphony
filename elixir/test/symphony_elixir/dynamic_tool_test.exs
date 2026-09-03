@@ -100,6 +100,66 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
            }
   end
 
+  test "Mini PR reviewer exposes only the server-bound typed submission tool" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os_mini_pr_review",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "reviewer-token"
+    )
+
+    assert [
+             %{
+               "name" => "economic_os_submit_mini_pr_review",
+               "inputSchema" => %{
+                 "additionalProperties" => false,
+                 "required" => required,
+                 "properties" => %{
+                   "verdict" => %{"enum" => ["approve", "request_changes"]},
+                   "findings" => %{"items" => %{"additionalProperties" => false}}
+                 }
+               }
+             }
+           ] = DynamicTool.tool_specs()
+
+    assert "head_sha" in required
+    refute "review_id" in required
+  end
+
+  test "Mini PR submission binds id from current issue and rejects model-selected identity" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "economic_os_mini_pr_review",
+      tracker_endpoint: "https://economic-os.example",
+      tracker_api_token: "reviewer-token"
+    )
+
+    parent = self()
+    result = mini_pr_review_result()
+
+    response =
+      DynamicTool.execute(
+        "economic_os_submit_mini_pr_review",
+        result,
+        issue: %{id: "7"},
+        mini_pr_review_submitter: fn issue_id, submitted ->
+          send(parent, {:submitted_review, issue_id, submitted})
+          :ok
+        end
+      )
+
+    assert_receive {:submitted_review, "7", ^result}
+    assert response["success"] == true
+
+    rejected =
+      DynamicTool.execute(
+        "economic_os_submit_mini_pr_review",
+        Map.put(result, "review_id", 99),
+        issue: %{id: "7"},
+        mini_pr_review_submitter: fn _issue_id, _submitted -> flunk("must reject") end
+      )
+
+    assert rejected["success"] == false
+  end
+
   test "unsupported tools return a failure payload with the supported tool list" do
     response = DynamicTool.execute("not_a_real_tool", %{})
 
@@ -118,6 +178,24 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "supportedTools" => ["linear_graphql"]
              }
            }
+  end
+
+  defp mini_pr_review_result do
+    %{
+      "schema_version" => "mini-pr-review-result-v1",
+      "head_sha" => String.duplicate("b", 40),
+      "policy_revision" => "mini-pr-review-v1",
+      "policy_digest" => String.duplicate("a", 64),
+      "manifest_digest" => String.duplicate("b", 64),
+      "verdict" => "approve",
+      "summary" => "Reusable and correct",
+      "checked_areas" => ["correctness", "architecture"],
+      "reusable_assessment" => "General capability",
+      "placement_assessment" => "Correct package boundary",
+      "evidence" => ["Exact SHA CI"],
+      "findings" => [],
+      "complete" => true
+    }
   end
 
   test "linear_graphql returns successful GraphQL responses as tool text" do

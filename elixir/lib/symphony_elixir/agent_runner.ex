@@ -170,7 +170,7 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp managed_tracker? do
-    Config.tracker_kind() in ["markdown", "economic_os"]
+    Config.tracker_kind() in ["markdown", "economic_os", "economic_os_mini_pr_review"]
   end
 
   defp markdown_tracker?, do: Config.tracker_kind() == "markdown"

@@ -42,6 +42,7 @@ defmodule SymphonyElixir.Tracker do
       "memory" -> SymphonyElixir.Tracker.Memory
       "markdown" -> SymphonyElixir.Tracker.Markdown
       "economic_os" -> SymphonyElixir.Tracker.EconomicOS
+      "economic_os_mini_pr_review" -> SymphonyElixir.Tracker.EconomicOSMiniPRReview
       _ -> SymphonyElixir.Linear.Adapter
     end
   end

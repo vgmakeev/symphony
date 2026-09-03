@@ -83,7 +83,8 @@ Optional flags:
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
 
-The fork supports `linear`, `markdown`, and `economic_os` trackers. The
+The fork supports `linear`, `markdown`, `economic_os`, and
+`economic_os_mini_pr_review` trackers. The
 `economic_os` adapter reads agent-review agendas and confirmed manager SMART
 responses awaiting a critical quality review. Codex records the review through
 one agenda-bound `economic_os_submit_analysis` dynamic tool; rejected submissions
@@ -92,6 +93,11 @@ open with one precise challenge. The adapter binds each review to the exact
 manager-input digest and presents an agenda waiting on a human as terminal only
 to the executor, so Symphony cannot loop on stale input, duplicate business
 state or impersonate human approval.
+
+`economic_os_mini_pr_review` is a separate lifecycle. It claims an immutable
+Mini PR workspace, exposes only `economic_os_submit_mini_pr_review`, and records
+run telemetry through review-specific endpoints. The model cannot select a PR,
+publish a GitHub review, or merge; Economic OS owns those deterministic writes.
 
 ```yaml
 tracker:
