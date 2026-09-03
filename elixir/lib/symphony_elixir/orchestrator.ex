@@ -9,7 +9,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
-  alias SymphonyElixir.Tracker.{EconomicOS, EconomicOSMiniPRReview}
+
+  alias SymphonyElixir.Tracker.{
+    EconomicOS,
+    EconomicOSMiniPRReview,
+    EconomicOSTelegramWorkItem
+  }
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -944,6 +949,7 @@ defmodule SymphonyElixir.Orchestrator do
     case Config.tracker_kind() do
       "economic_os" -> EconomicOS
       "economic_os_mini_pr_review" -> EconomicOSMiniPRReview
+      "economic_os_telegram_work_item" -> EconomicOSTelegramWorkItem
       _ -> nil
     end
   end
@@ -954,11 +960,17 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_economic_os_run_start(EconomicOSMiniPRReview, issue_id, attributes),
     do: EconomicOSMiniPRReview.record_agent_run_start(issue_id, attributes)
 
+  defp record_economic_os_run_start(EconomicOSTelegramWorkItem, issue_id, attributes),
+    do: EconomicOSTelegramWorkItem.record_agent_run_start(issue_id, attributes)
+
   defp record_economic_os_run_finish(EconomicOS, issue_id, attributes),
     do: EconomicOS.record_agent_run_finish(issue_id, attributes)
 
   defp record_economic_os_run_finish(EconomicOSMiniPRReview, issue_id, attributes),
     do: EconomicOSMiniPRReview.record_agent_run_finish(issue_id, attributes)
+
+  defp record_economic_os_run_finish(EconomicOSTelegramWorkItem, issue_id, attributes),
+    do: EconomicOSTelegramWorkItem.record_agent_run_finish(issue_id, attributes)
 
   defp terminal_run_observation({:down, :normal}),
     do: {"succeeded", "completed", "Agent task completed", nil}

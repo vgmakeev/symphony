@@ -5,7 +5,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.{Config, Linear.Issue}
   alias SymphonyElixir.Linear.Client
-  alias SymphonyElixir.Tracker.{EconomicOS, EconomicOSMiniPRReview}
+
+  alias SymphonyElixir.Tracker.{
+    EconomicOS,
+    EconomicOSMiniPRReview,
+    EconomicOSTelegramWorkItem
+  }
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
@@ -123,6 +128,62 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       "complete" => %{"type" => "boolean"}
     }
   }
+  @telegram_work_item_submit_tool "economic_os_submit_telegram_work_item"
+  @telegram_work_item_submit_description """
+  Submit the typed result for the current Telegram work item. Symphony binds
+  the work-item identity; the model cannot select a work item or recipient.
+  """
+  @telegram_interaction_schema %{
+    "type" => ["object", "null"],
+    "additionalProperties" => false,
+    "required" => [
+      "kind",
+      "text",
+      "reason",
+      "unlocks",
+      "proposal_digest",
+      "allowed_answers",
+      "boundary_operation",
+      "deadline"
+    ],
+    "properties" => %{
+      "kind" => %{"type" => "string", "enum" => ["approval", "choice", "question"]},
+      "text" => %{"type" => "string", "minLength" => 1},
+      "reason" => %{"type" => "string", "minLength" => 1},
+      "unlocks" => %{"type" => "string", "minLength" => 1},
+      "proposal_digest" => %{"type" => "string", "pattern" => "^[0-9a-f]{64}$"},
+      "allowed_answers" => %{
+        "type" => "array",
+        "minItems" => 1,
+        "maxItems" => 8,
+        "items" => %{"type" => "string"}
+      },
+      "boundary_operation" => %{"type" => ["string", "null"]},
+      "deadline" => %{"type" => ["string", "null"], "format" => "date-time"}
+    }
+  }
+  @telegram_work_item_submit_input_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => [
+      "schema_version",
+      "manifest_digest",
+      "outcome",
+      "summary",
+      "artifact_refs",
+      "evidence_refs",
+      "interaction"
+    ],
+    "properties" => %{
+      "schema_version" => %{"type" => "string", "enum" => ["telegram-work-item-result-v1"]},
+      "manifest_digest" => %{"type" => "string", "pattern" => "^[0-9a-f]{64}$"},
+      "outcome" => %{"type" => "string", "enum" => ["completed", "failed", "awaiting_human"]},
+      "summary" => %{"type" => "string", "minLength" => 1},
+      "artifact_refs" => %{"type" => "array", "items" => %{"type" => "string"}},
+      "evidence_refs" => %{"type" => "array", "items" => %{"type" => "string"}},
+      "interaction" => @telegram_interaction_schema
+    }
+  }
 
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
@@ -135,6 +196,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
       @mini_pr_review_submit_tool ->
         execute_mini_pr_review_submit(arguments, opts)
+
+      @telegram_work_item_submit_tool ->
+        execute_telegram_work_item_submit(arguments, opts)
 
       other ->
         failure_response(%{
@@ -164,6 +228,15 @@ defmodule SymphonyElixir.Codex.DynamicTool do
             "name" => @mini_pr_review_submit_tool,
             "description" => @mini_pr_review_submit_description,
             "inputSchema" => @mini_pr_review_submit_input_schema
+          }
+        ]
+
+      "economic_os_telegram_work_item" ->
+        [
+          %{
+            "name" => @telegram_work_item_submit_tool,
+            "description" => @telegram_work_item_submit_description,
+            "inputSchema" => @telegram_work_item_submit_input_schema
           }
         ]
 
@@ -202,6 +275,66 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       {:error, reason} -> failure_response(mini_pr_review_tool_error_payload(reason))
     end
   end
+
+  defp execute_telegram_work_item_submit(arguments, opts) do
+    submitter =
+      Keyword.get(
+        opts,
+        :telegram_work_item_submitter,
+        &EconomicOSTelegramWorkItem.submit_result/2
+      )
+
+    with {:ok, issue_id} <- current_issue_id(Keyword.get(opts, :issue)),
+         {:ok, result} <- normalize_telegram_work_item_submit(arguments),
+         :ok <- submitter.(issue_id, result) do
+      graphql_response(%{
+        "workItemId" => issue_id,
+        "outcome" => field(result, "outcome")
+      })
+    else
+      {:error, reason} -> failure_response(telegram_work_item_tool_error_payload(reason))
+    end
+  end
+
+  defp normalize_telegram_work_item_submit(arguments) when is_map(arguments) do
+    forbidden = [
+      "work_item_id",
+      :work_item_id,
+      "recipient_person_id",
+      :recipient_person_id,
+      "chat_id",
+      :chat_id
+    ]
+
+    required =
+      Enum.reject(@telegram_work_item_submit_input_schema["required"], &has_field?(arguments, &1))
+
+    outcome = field(arguments, "outcome")
+    interaction = field(arguments, "interaction")
+
+    cond do
+      Enum.any?(forbidden, &Map.has_key?(arguments, &1)) ->
+        {:error, :model_supplied_work_item_identity}
+
+      required != [] ->
+        {:error, {:missing_work_item_fields, required}}
+
+      outcome not in ["completed", "failed", "awaiting_human"] ->
+        {:error, :invalid_work_item_outcome}
+
+      outcome == "awaiting_human" and not is_map(interaction) ->
+        {:error, :missing_human_interaction}
+
+      outcome != "awaiting_human" and not is_nil(interaction) ->
+        {:error, :unexpected_human_interaction}
+
+      true ->
+        {:ok, arguments}
+    end
+  end
+
+  defp normalize_telegram_work_item_submit(_arguments),
+    do: {:error, :invalid_work_item_arguments}
 
   defp normalize_mini_pr_review_submit(arguments) when is_map(arguments) do
     forbidden = ["review_id", :review_id, "repository", :repository, "pull_number", :pull_number]
@@ -439,6 +572,25 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     %{
       "error" => %{
         "message" => "Mini PR review submission failed.",
+        "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp telegram_work_item_tool_error_payload({:economic_os_api_status, status, response_body}) do
+    %{
+      "error" => %{
+        "message" => "Telegram work-item submission failed with HTTP #{status}.",
+        "status" => status,
+        "details" => response_body
+      }
+    }
+  end
+
+  defp telegram_work_item_tool_error_payload(reason) do
+    %{
+      "error" => %{
+        "message" => "Telegram work-item submission failed.",
         "reason" => inspect(reason)
       }
     }

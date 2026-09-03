@@ -83,8 +83,8 @@ Optional flags:
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
 
-The fork supports `linear`, `markdown`, `economic_os`, and
-`economic_os_mini_pr_review` trackers. The
+The fork supports `linear`, `markdown`, `economic_os`,
+`economic_os_mini_pr_review`, and `economic_os_telegram_work_item` trackers. The
 `economic_os` adapter reads agent-review agendas and confirmed manager SMART
 responses awaiting a critical quality review. Codex records the review through
 one agenda-bound `economic_os_submit_analysis` dynamic tool; rejected submissions
@@ -98,6 +98,11 @@ state or impersonate human approval.
 Mini PR workspace, exposes only `economic_os_submit_mini_pr_review`, and records
 run telemetry through review-specific endpoints. The model cannot select a PR,
 publish a GitHub review, or merge; Economic OS owns those deterministic writes.
+
+`economic_os_telegram_work_item` claims one prepared work item, exposes only
+`economic_os_submit_telegram_work_item`, and records run telemetry through
+work-item-specific endpoints. The model submits a bounded result or typed human
+request; Mini binds the recipient, lifecycle and Telegram delivery.
 
 ```yaml
 tracker:

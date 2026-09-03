@@ -561,7 +561,8 @@ Validation checks:
 This section is intentionally redundant so a coding agent can implement the config layer quickly.
 
 - `tracker.kind`: string, required; supported values are `linear`, `markdown`,
-  `economic_os`, and `economic_os_mini_pr_review`
+  `economic_os`, `economic_os_mini_pr_review`, and
+  `economic_os_telegram_work_item`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
@@ -1064,7 +1065,8 @@ Optional client-side tool extension:
 
 - An implementation may expose a limited set of client-side tools to the app-server session.
 - Current optional standardized tools: `linear_graphql`,
-  `economic_os_submit_analysis`, and `economic_os_submit_mini_pr_review`.
+  `economic_os_submit_analysis`, `economic_os_submit_mini_pr_review`, and
+  `economic_os_submit_telegram_work_item`.
 - If implemented, supported tools should be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names should still return a failure result and continue the session.
@@ -1130,6 +1132,18 @@ Optional client-side tool extension:
   evidence, findings and completeness.
 - Economic OS revalidates the schema and immutable binding, performs the FSM
   transition and owns idempotent GitHub publication/reconciliation.
+
+`economic_os_submit_telegram_work_item` extension contract:
+
+- Availability: only when `tracker.kind == "economic_os_telegram_work_item"`;
+  no Linear, agenda, or Mini PR submission tool is advertised.
+- Symphony binds the current work-item id. The model supplies only the exact
+  manifest digest, terminal outcome, bounded summary, safe artifact/evidence
+  references and an optional typed human interaction.
+- Work-item id, recipient person and Telegram destination are not accepted from
+  the model. Economic OS revalidates the manifest binding, owns the lifecycle,
+  chooses the recipient and delivers the result or decision card.
+- Repeated identical submissions use a deterministic idempotency key.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
 
@@ -1265,6 +1279,9 @@ Symphony does not require general-purpose tracker write APIs in the orchestrator
 - For `economic_os_mini_pr_review`, the single review-bound
   `economic_os_submit_mini_pr_review` extension is the allowed write boundary.
   It has no GitHub credential and cannot select another review.
+- For `economic_os_telegram_work_item`, the single work-item-bound
+  `economic_os_submit_telegram_work_item` extension is the allowed write
+  boundary. It cannot select another work item, recipient or Telegram chat.
 - The Economic OS adapter may project an active business agenda as tracker
   `Done` after its current candidate input has been processed. This is an
   executor-local stop signal only: it does not close or mutate the agenda in

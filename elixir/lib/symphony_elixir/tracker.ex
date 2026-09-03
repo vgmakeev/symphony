@@ -43,6 +43,7 @@ defmodule SymphonyElixir.Tracker do
       "markdown" -> SymphonyElixir.Tracker.Markdown
       "economic_os" -> SymphonyElixir.Tracker.EconomicOS
       "economic_os_mini_pr_review" -> SymphonyElixir.Tracker.EconomicOSMiniPRReview
+      "economic_os_telegram_work_item" -> SymphonyElixir.Tracker.EconomicOSTelegramWorkItem
       _ -> SymphonyElixir.Linear.Adapter
     end
   end

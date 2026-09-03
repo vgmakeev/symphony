@@ -1,0 +1,7 @@
+schema: spec-driven
+
+context: |
+  Symphony is a bounded Codex App Server executor. Tracker adapters may read
+  and claim one server-owned work item and may expose only narrowly typed,
+  server-bound submission tools. Preserve one issue to one Codex agent and do
+  not move business state or human authority into Symphony.
