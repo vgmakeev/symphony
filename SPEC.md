@@ -1114,7 +1114,7 @@ Optional client-side tool extension:
   model-provided argument.
 - `answered` submits values through the Economic OS `answer` transition so its
   validation and state change are atomic. `needs_revision` records the review
-  without closing the agenda.
+  through `reopen`, returning a claimed agenda to `open` without closing it.
 - When manager input is present, `_manager_review.input_digest` must equal the
   current `_manager_input.digest`. A supported legacy alias may be canonicalized
   before submission; stale or missing bindings are rejected.

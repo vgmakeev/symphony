@@ -147,9 +147,14 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
 
     assert :ok = EconomicOS.submit_analysis("8", "One concrete gap", response_data, "needs_revision")
     assert_receive {:request, options}
-    assert options[:method] == :patch
-    assert options[:url] =~ "/revenue_management_agendas/8"
-    assert options[:json] == %{response: "One concrete gap", response_data: response_data}
+    assert options[:method] == :post
+    assert options[:url] =~ "/revenue_management_agendas/8:transition"
+    assert options[:json].transition == "reopen"
+
+    assert options[:json].values == %{
+             response: "One concrete gap",
+             response_data: response_data
+           }
   end
 
   test "retains Economic OS error details for a rejected analysis" do
@@ -186,7 +191,7 @@ defmodule SymphonyElixir.EconomicOSTrackerTest do
              )
 
     assert_receive {:request, options}
-    review = options[:json].response_data["_manager_review"]
+    review = options[:json].values.response_data["_manager_review"]
     assert review["input_digest"] == "current-input"
     refute Map.has_key?(review, "manager_input_digest")
   end

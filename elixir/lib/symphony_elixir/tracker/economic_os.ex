@@ -74,7 +74,12 @@ defmodule SymphonyElixir.Tracker.EconomicOS do
           )
 
         "needs_revision" ->
-          request(:patch, "/#{issue_id}", values, idempotency_key: idempotency_key)
+          request(
+            :post,
+            "/#{issue_id}:transition",
+            %{transition: "reopen", context: %{}, values: values},
+            idempotency_key: idempotency_key
+          )
 
         _ ->
           {:error, :invalid_analysis_outcome}
