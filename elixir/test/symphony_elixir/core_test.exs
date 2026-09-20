@@ -1081,7 +1081,7 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
-  test "agent runner stops continuing once agent.max_turns is reached" do
+  test "agent runner fails an active issue once agent.max_turns is reached" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1167,7 +1167,9 @@ defmodule SymphonyElixir.CoreTest do
         labels: []
       }
 
-      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+      assert_raise RuntimeError, ~r/max_turns_exhausted/, fn ->
+        AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+      end
 
       trace = File.read!(trace_file)
       assert length(String.split(trace, "RUN", trim: true)) == 1

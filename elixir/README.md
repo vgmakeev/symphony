@@ -20,6 +20,10 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 4. Sends a workflow prompt to Codex
 5. Keeps Codex working on the issue until the work is done
 
+Symphony checks the final turn status in `turn/completed`. A failed or interrupted
+Codex turn fails the worker run and enters retry backoff; it is not treated as
+completed work.
+
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
 
@@ -149,6 +153,7 @@ Notes:
   `externalSandbox`, `workspaceWrite`.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+  Exhausting the limit while the issue remains active fails the run and uses failure backoff.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run

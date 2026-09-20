@@ -627,6 +627,8 @@ Important nuance:
 - The first turn should use the full rendered task prompt.
 - Continuation turns should send only continuation guidance to the existing thread, not resend the
   original task prompt that is already present in thread history.
+- If `agent.max_turns` is exhausted while the issue remains active, the worker fails and enters
+  failure backoff. This must not be reported as completed work or retried immediately.
 - Once the worker exits normally, the orchestrator still schedules a short continuation retry
   (about 1 second) so it can re-check whether the issue remains active and needs another worker
   session.
@@ -987,7 +989,10 @@ The client reads line-delimited messages until the turn terminates.
 
 Completion conditions:
 
-- `turn/completed` -> success
+- `turn/completed` -> success when `params.turn.status` is `completed` (or absent
+  for legacy test clients); a
+  `failed` or `interrupted` status is a failed turn even though the notification
+  method is `turn/completed`
 - `turn/failed` -> failure
 - `turn/cancelled` -> failure
 - turn timeout (`turn_timeout_ms`) -> failure
@@ -1922,7 +1927,9 @@ function run_agent_attempt(issue, attempt, orchestrator_channel):
       break
 
     if turn_number >= max_turns:
-      break
+      app_server.stop_session(session)
+      run_hook_best_effort("after_run", workspace.path)
+      fail_worker("max_turns exhausted while issue remains active")
 
     turn_number = turn_number + 1
 
